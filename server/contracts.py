@@ -262,5 +262,9 @@ class FailureInput(LeaseInput):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class ClearInput(Contract):
+    confirm: Literal["CLEAR"]
+
+
 class ReleaseInput(LeaseInput):
     reason: str = Field(min_length=1, max_length=1000)

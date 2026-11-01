@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from server import (
     assessments,
+    clear,
     embeddings,
     events,
     exports,
@@ -28,6 +29,7 @@ from server.contracts import (
     ApprovalInput,
     BulkInput,
     ClaimInput,
+    ClearInput,
     DuplicateQuery,
     EventInput,
     EventPatch,
@@ -146,6 +148,52 @@ def create_app(db_path=None, *, agent_token=None):
                     "SELECT r.*,COUNT(f.id) AS files,COALESCE(SUM(f.size),0) AS bytes FROM roots r LEFT JOIN file_instances f ON f.root_id=r.id GROUP BY r.id ORDER BY r.name"
                 )
             ]
+
+    @app.get("/api/browse")
+    def browse(path: str | None = None):
+        """Folders a library can be chosen from. The app has no login, so only these places."""
+        setting = os.environ.get("PHOTOSIFT_BROWSE_ROOTS")
+        places = [Path(p) for p in setting.split(os.pathsep) if p] if setting else []
+        places = places or [Path.home()]
+        if path is None:
+            return {
+                "path": None,
+                "parent": None,
+                "folders": [
+                    {"name": str(place), "path": str(place)}
+                    for place in places
+                    if place.is_dir()
+                ],
+            }
+        try:
+            target = checked_path(path)
+            place = next(
+                (p for p in places if target.resolve().is_relative_to(p.resolve())),
+                None,
+            )
+            if place is None:
+                raise HTTPException(403, "That folder can’t be browsed")
+            with os.scandir(target) as entries:
+                names = sorted(
+                    (
+                        entry.name
+                        for entry in entries
+                        if entry.is_dir(follow_symlinks=False)
+                        and not entry.name.startswith((".", "$"))
+                    ),
+                    key=str.lower,
+                )
+        except (OSError, ValueError) as exc:
+            raise HTTPException(422, "That folder can’t be opened") from exc
+        return {
+            "path": str(target),
+            "parent": None
+            if target.resolve() == place.resolve()
+            else str(target.parent),
+            "folders": [
+                {"name": name, "path": str(target / name)} for name in names[:1000]
+            ],
+        }
 
     @app.post("/api/roots", status_code=201)
     def add_root(request: RootInput):
@@ -1064,6 +1112,10 @@ def create_app(db_path=None, *, agent_token=None):
     def comparison():
         with db.read() as c:
             return embeddings.overview(c)
+
+    @app.post("/api/database/clear")
+    def clear_database(request: ClearInput):
+        return clear.clear(db)
 
     @app.post("/api/comparison/labels")
     def comparison_labels(request: embeddings.ComparisonSample):

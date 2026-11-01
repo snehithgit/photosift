@@ -10,7 +10,11 @@ model service and agent, and pulls work from Zima.
    photo folder. Leave `:ro` on it, so originals can't be written to from the container.
 2. In ZimaOS, open App Store, choose Custom Install, and import that file.
 3. Set `PHOTOSIFT_AGENT_TOKEN` to a long random secret.
-4. Open `http://<zima-address>:8000` and add a library with the path `/library`.
+4. Open `http://<zima-address>:8000` and choose `/library`, or a folder inside it, from the list.
+5. When you're ready, click **Scan now** under Library. Nothing is read until you do.
+
+To start over, use Settings, Libraries, Clear database. It keeps your originals, exported copies,
+libraries, settings, prompts, Teach labels and model setup.
 
 App data lives in `/DATA/AppData/photosift`. Keep it on a local disk: SQLite must not run on a
 network share. The app has no login, so keep port 8000 on your home network and off the internet.

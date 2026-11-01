@@ -9,7 +9,7 @@ RUN npx -y pnpm@11.25.0 run build
 
 FROM python:3.12-slim-bookworm
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PHOTOSIFT_DB=/data/photosift.sqlite3
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PHOTOSIFT_DB=/data/photosift.sqlite3 PHOTOSIFT_BROWSE_ROOTS=/library
 # Only what the server and worker import, at the versions the tests ran against.
 COPY pyproject.toml requirements.lock ./
 RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']))" > /tmp/runtime.txt \

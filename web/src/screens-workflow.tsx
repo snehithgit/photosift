@@ -616,6 +616,26 @@ function useServerSetting<T>(section: string, fallback: T) {
   return { value: request.data?.value ?? fallback, save, loaded: request.isSuccess };
 }
 
+function ClearDatabase() {
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const clear = async () => {
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api.clearDatabase();
+      setTyped('');
+      setMessage({ ok: true, text: `Cleared. Click Scan now in Library when you’re ready.${result.spaceReclaimed ? '' : ' Disk space will be freed later.'}` });
+      await refreshAll();
+    } catch (error) { setMessage({ ok: false, text: errorText(error) }); }
+    setBusy(false);
+  };
+  return <><div className="setting-row"><div><strong>Erases</strong><span>The list of photos, your Keep, Set aside and Later decisions, history, events, groups, export records, thumbnails and vectors. This can’t be undone, and the laptop must prepare, embed and check every photo again.</span></div></div>
+    <div className="setting-row"><div><strong>Keeps</strong><span>Your original photos and exported copies, libraries, settings, prompts, Teach labels, comparison reports and model setup.</span></div></div>
+    <form className="setting-row" onSubmit={(event) => { event.preventDefault(); if (typed === 'CLEAR' && !busy) void clear(); }}><input aria-label="Type CLEAR to confirm" placeholder="Type CLEAR to confirm" value={typed} onChange={(event) => setTyped(event.target.value)}/><button type="submit" className="primary-action danger-action" disabled={typed !== 'CLEAR' || busy}>{busy ? <LoaderCircle size={14} className="spin"/> : null} Clear database</button></form>
+    {message && <p className={message.ok ? 'model-ok' : 'warning-text'}>{message.text}</p>}</>;
+}
+
 export function SettingsScreen() {
   const params = useParams({ strict: false }) as { section?: string };
   const section = SETTINGS_SECTIONS.find(([id]) => id === params.section)?.[0] ?? 'appearance';
@@ -658,7 +678,8 @@ export function SettingsScreen() {
     {(roots.data ?? []).map((root) => <div className="setting-row" key={root.id}><div><strong>{root.path}</strong><span>{formatCount(root.files)} files · {formatBytes(root.bytes)} · read-only to PhotoSift</span></div><button type="button" className="secondary-button" onClick={() => go(`/library?root=${root.id}`)}>Open</button></div>)}
     <div className="setting-row"><div><strong>Scanning</strong><span>New or changed files are picked up when you click Scan now in Library.</span></div><button type="button" className="secondary-button" onClick={() => go('/setup')}>Add a library</button></div>
     <h3 className="settings-subhead">Protected folders</h3>{protection.value.protectedFolders.map((folder) => <div className="setting-row" key={`${folder.root}:${folder.folder}`}><div><strong>{rootName(folder.root)}/{folder.folder}</strong><span>No clutter suggestions inside</span></div><button type="button" className="quiet-action" onClick={() => { void protection.save({ ...protection.value, protectedFolders: protection.value.protectedFolders.filter((item) => item !== folder) }); }}>Remove</button></div>)}
-    <form className="setting-row" onSubmit={(event) => { event.preventDefault(); const clean = newFolder.trim().replace(/^\/+|\/+$/g, ''); if (clean && firstRoot) void protection.save({ ...protection.value, protectedFolders: [...protection.value.protectedFolders, { root: firstRoot.id, folder: clean }] }); setNewFolder(''); }}><input aria-label="Folder to protect" placeholder={`Folder inside ${firstRoot?.name ?? 'your library'}, like Family/2019`} value={newFolder} onChange={(event) => setNewFolder(event.target.value)}/><button type="submit" className="secondary-button" disabled={!firstRoot}>Protect folder</button></form></>;
+    <form className="setting-row" onSubmit={(event) => { event.preventDefault(); const clean = newFolder.trim().replace(/^\/+|\/+$/g, ''); if (clean && firstRoot) void protection.save({ ...protection.value, protectedFolders: [...protection.value.protectedFolders, { root: firstRoot.id, folder: clean }] }); setNewFolder(''); }}><input aria-label="Folder to protect" placeholder={`Folder inside ${firstRoot?.name ?? 'your library'}, like Family/2019`} value={newFolder} onChange={(event) => setNewFolder(event.target.value)}/><button type="submit" className="secondary-button" disabled={!firstRoot}>Protect folder</button></form>
+    <h3 className="settings-subhead">Clear database</h3><ClearDatabase/></>;
   else if (section === 'laptop-agent') body = <><p>The laptop pulls work from Zima and can go offline at any time.</p>
     <div className="setting-row"><div><strong>Status</strong><span>{laptopOffline ? 'Offline · GPU stages are waiting' : `Online · last contact ${status.data?.laptop.lastContact ? new Date(status.data.laptop.lastContact).toLocaleTimeString() : 'just now'}`}</span></div><span className={laptopOffline ? 'warning-text' : 'model-ok'}>{laptopOffline ? 'Offline' : 'Online'}</span></div>
     <div className="setting-row"><div><strong>Access token</strong><span>Set the same PHOTOSIFT_AGENT_TOKEN on this server and on the laptop agent.</span></div></div>
@@ -682,6 +703,15 @@ export function SettingsScreen() {
 
 // ---------- Setup ----------
 
+function FolderPicker({ selected, onSelect }: { selected: string; onSelect: (path: string) => void }) {
+  const [path, setPath] = useState<string | null>(null);
+  const listing = useQuery({ queryKey: ['browse', path], queryFn: () => api.browse(path) });
+  const folders = listing.data?.folders ?? [];
+  return <div className="field-label"><div className="setting-row"><div><strong>{selected ? `Selected: ${selected}` : 'Choose your photo folder'}</strong><span>{path ?? 'Folders this server can read'}</span></div>{path && <button type="button" className="primary-action" onClick={() => onSelect(path)}>Use this folder</button>}</div>
+    {path && <button type="button" className="quiet-action" onClick={() => setPath(listing.data?.parent ?? null)}>Back</button>}
+    <div style={{ maxHeight: 240, overflowY: 'auto' }}>{listing.isLoading ? <div className="loading-line"><LoaderCircle size={14}/> Loading folders…</div> : listing.error ? <p className="warning-text">{errorText(listing.error)}</p> : folders.length ? folders.map((folder) => <div className="setting-row" key={folder.path}><div><strong>{folder.name}</strong></div><div className="button-row"><button type="button" className="secondary-button" onClick={() => setPath(folder.path)}>Open</button><button type="button" className="secondary-button" onClick={() => onSelect(folder.path)}>Select</button></div></div>) : <p className="muted-copy">No folders inside this one.</p>}</div></div>;
+}
+
 export function SetupScreen() {
   const status = useStatus();
   const roots = useRoots();
@@ -703,8 +733,7 @@ export function SetupScreen() {
     const path = root.trim();
     setRootError(null); setAdding(true);
     try {
-      const added = await api.addRoot(path, path.split(/[\\/]/).filter(Boolean).at(-1) || path);
-      await api.scan(added.id, '', false);
+      await api.addRoot(path, path.split(/[\\/]/).filter(Boolean).at(-1) || path);
       setRoot('');
       await refreshAll();
       setAdding(false);
@@ -720,7 +749,7 @@ export function SetupScreen() {
   return <section className="setup-page"><div className="setup-head"><div className="brand-mark large"><span/><span/><span/></div><div className="eyebrow">First-run setup · {step} of 5</div><h1>{labels[step - 1]}</h1><p className="muted-copy">You can skip any step and finish it later in Settings.</p></div>
     <div className="setup-progress">{labels.map((item, index) => <span key={item} className={index < step ? 'done' : ''}/>)}</div>
     <div className="setup-card">
-      {step === 1 && <><Folder size={24}/><h2>Add a library</h2><label className="field-label">Library folder on Zima<input value={root} placeholder={firstRoot ? firstRoot.path : 'The full path of your photo folder'} onChange={(event) => setRoot(event.target.value)}/></label>{rootError ? <p className="warning-text">{rootError}</p> : <p>{roots.data?.length ? `${formatCount(roots.data.length)} ${roots.data.length === 1 ? 'library' : 'libraries'} added · ${formatCount(totalFiles)} files read so far${scan && (scan.state === 'queued' || scan.state === 'running') ? ' · scanning…' : ''}.` : 'PhotoSift reads this folder and never changes it. Mount it read-only if you can.'}</p>}</>}
+      {step === 1 && <><Folder size={24}/><h2>Add a library</h2><FolderPicker selected={root} onSelect={setRoot}/>{rootError ? <p className="warning-text">{rootError}</p> : <p>{roots.data?.length ? `${formatCount(roots.data.length)} ${roots.data.length === 1 ? 'library' : 'libraries'} added · ${formatCount(totalFiles)} files read so far${scan && (scan.state === 'queued' || scan.state === 'running') ? ' · scanning…' : ''}. Nothing is read until you click Scan now in Library.` : 'PhotoSift reads this folder and never changes it. Mount it read-only if you can.'}</p>}</>}
       {step === 2 && <><Sparkles size={24}/><h2>Connect the laptop</h2><p>Start the PhotoSift agent on your laptop with the same PHOTOSIFT_AGENT_TOKEN as this server. Its settings are in agent.local.json.</p><p className={laptopOffline ? 'warning-text' : 'model-ok'}>{laptopOffline ? 'Waiting for the agent…' : 'Agent connected'}</p></>}
       {step === 3 && <><Sparkles size={24}/><h2>Choose models</h2><p>The laptop service is set up for SigLIP 2 so400m. An index becomes primary only after it’s been filled and compared on your photos. {stages.data?.d3.state === 'configured' ? 'D3 Nano is configured.' : 'D3 Nano isn’t configured yet.'}</p><TestButton label="Test the laptop"/></>}
       {step === 4 && <><Shield size={24}/><h2>Protect folders</h2><p>Nothing inside these folders is ever suggested as clutter.</p>{candidates.length ? candidates.map((node) => <label className="setting-row" key={node.folder}><span>{node.folder}</span><input type="checkbox" checked={isProtected(node.folder)} onChange={(event) => { if (firstRoot) void protection.save({ ...protection.value, protectedFolders: event.target.checked ? [...protection.value.protectedFolders, { root: firstRoot.id, folder: node.folder }] : protection.value.protectedFolders.filter((item) => !(item.root === firstRoot.id && item.folder === node.folder)) }); }}/></label>) : <p>Folders appear here after the first scan finishes.</p>}</>}

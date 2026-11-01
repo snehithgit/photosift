@@ -96,6 +96,8 @@ export const api = {
   splitEvent: (id: string, body: { expectedVersion: number; contentIds: string[]; name: string }) => request<PhotoEvent>(`/api/events/${id}/split`, { json: body }),
   duplicates: (query: PhotoQuery & { kind: 'exact' | 'similar' }, paging: Paging = {}) => request<{ items: DuplicateSet[]; total: number }>(`/api/duplicates${queryString({ ...query, ...paging })}`),
   stages: () => request<Stages>('/api/stages'),
+  browse: (path: string | null) => request<{ path: string | null; parent: string | null; folders: Array<{ name: string; path: string }> }>(`/api/browse${queryString(path ? { path } : {})}`),
+  clearDatabase: () => request<{ cleared: boolean; spaceReclaimed: boolean }>('/api/database/clear', { json: { confirm: 'CLEAR' } }),
   saveSample: (members: SampleMember[]) => request<SampleSummary>('/api/comparison/labels', { json: { members } }),
   comparison: () => request<Comparison | null>('/api/comparison'),
   evaluate: (indexId: string, sampleId: string, promptVersion: string) => request<ComparisonReport>(`/api/indexes/${indexId}/evaluate`, { json: { sampleId, promptVersion } }),

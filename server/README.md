@@ -125,6 +125,8 @@ All writes remain on Zima. Request payloads are capped before JSON/base64 parsin
 | Register/list eval spaces | `POST/GET /api/indexes` |
 | Choose the index the laptop fills | `POST /api/pipeline/embedding/configure`, `GET /api/pipeline/embedding` |
 | Download a leased job's original | Authenticated `POST /api/agent/jobs/{id}/source` |
+| Choose a library folder | `GET /api/browse?path=`, limited to `PHOTOSIFT_BROWSE_ROOTS` (home folder if unset, `/library` in the image) |
+| Start the library over | `POST /api/database/clear` with `{"confirm":"CLEAR"}`; see `ERASED` and `KEPT` in `server/clear.py` |
 | Queue prepared content | `POST /api/indexes/{id}/queue` with explicit `contentIds` |
 | Frozen labelled sample | `POST /api/comparison/samples` |
 | Versioned prompt vectors | `POST /api/indexes/{id}/prompts` |
@@ -204,7 +206,7 @@ fingerprints, stale/replayed results, isolated vector arithmetic, comparisons, c
 triage, neighbor/event suggestion rules, actual verified copy/rollback and publication-crash
 recovery. Symbolic-link creation may be skipped on Windows without that privilege.
 
-Current verification: **119 passed, 1 skipped** on Windows/Python 3.12.10. Ruff and dependency
+Current verification: **132 passed, 1 skipped** on Windows/Python 3.12.10. Ruff and dependency
 checks pass. The live smoke exercises API, Zima worker and laptop preparation agent as separate
 processes over HTTP. One Starlette/httpx test-client deprecation warning remains.
 
