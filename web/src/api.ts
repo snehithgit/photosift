@@ -29,7 +29,7 @@ async function request<T>(path: string, init?: RequestInit & { json?: unknown })
 // The fields of a photo query; the same object is sent for listing and for freezing a selection, so their fingerprints match.
 export interface PhotoQuery {
   root?: string; folder?: string; group?: GroupId; event?: string; documentType?: DocumentType; band?: Band | 'all'; origin?: Origin | 'all'; format?: string; q?: string;
-  protectedOnly?: boolean; faces?: boolean; duplicate?: boolean; decisions?: 'undecided' | 'all' | 'keep' | 'clutter' | 'later'; reviewed?: boolean; hideSetAside?: boolean;
+  protectedOnly?: boolean; faces?: boolean; duplicate?: boolean; decisions?: 'undecided' | 'all' | 'keep' | 'clutter' | 'later'; reviewed?: boolean; hideSetAside?: boolean; unlabelled?: boolean;
   sort?: 'default' | 'margin' | 'date' | 'size' | 'name' | 'content'; by?: 'none' | 'folder' | 'month' | 'event';
 }
 type Paging = { page?: number; limit?: number };
@@ -96,7 +96,7 @@ export const api = {
   splitEvent: (id: string, body: { expectedVersion: number; contentIds: string[]; name: string }) => request<PhotoEvent>(`/api/events/${id}/split`, { json: body }),
   duplicates: (query: PhotoQuery & { kind: 'exact' | 'similar' }, paging: Paging = {}) => request<{ items: DuplicateSet[]; total: number }>(`/api/duplicates${queryString({ ...query, ...paging })}`),
   stages: () => request<Stages>('/api/stages'),
-  saveSample: (members: SampleMember[]) => request<SampleSummary>('/api/comparison/samples', { json: { members } }),
+  saveSample: (members: SampleMember[]) => request<SampleSummary>('/api/comparison/labels', { json: { members } }),
   comparison: () => request<Comparison | null>('/api/comparison'),
   evaluate: (indexId: string, sampleId: string, promptVersion: string) => request<ComparisonReport>(`/api/indexes/${indexId}/evaluate`, { json: { sampleId, promptVersion } }),
   promote: (indexId: string, evaluationId: string) => request<unknown>(`/api/indexes/${indexId}/promote`, { json: { evaluationId } }),

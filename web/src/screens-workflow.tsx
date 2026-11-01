@@ -384,7 +384,7 @@ const LABEL_CATEGORY: Record<string, GroupId | 'personal'> = { Personal: 'person
 const TEACH_SIZE = 200;
 export function TeachScreen() {
   // One sample per visit: refreshing it mid-session would change photos under your keys.
-  const request = useQuery({ queryKey: ['teach-sample'], queryFn: () => api.photos({ sort: 'content' }, { limit: TEACH_SIZE }), staleTime: Infinity, gcTime: 0 });
+  const request = useQuery({ queryKey: ['teach-sample'], queryFn: () => api.photos({ sort: 'content', unlabelled: true }, { limit: TEACH_SIZE }), staleTime: Infinity, gcTime: 0 });
   const sample = request.data?.items ?? [];
   const [index, setIndex] = useState(0);
   const [labels, setLabels] = useState<Record<string, string>>({});
@@ -402,13 +402,13 @@ export function TeachScreen() {
     const onKey = (event: KeyboardEvent) => { if (done) return; const found = TEACH_LABELS.find(([key]) => key === event.key); if (found) label(found[1]); if (event.key === 'Backspace') back(); };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
   });
-  if (request.isLoading) return <div className="loading-line"><LoaderCircle size={14}/> Loading a sample…</div>;
+  if (request.isFetching) return <div className="loading-line"><LoaderCircle size={14}/> Loading a sample…</div>;
   if (done || !current) {
     const rows = Object.entries(labels).map(([id, value]) => ({ photo: sample.find((item) => item.contentId === id)!, value })).filter((row) => row.photo);
     const byGroup = GROUPS.map((group) => { const own = rows.filter((row) => row.photo.groupId === group.id); const correct = own.filter((row) => LABEL_GROUPS[row.value]?.includes(group.id)).length; return { group, total: own.length, correct }; }).filter((row) => row.total > 0);
     return <section className="page-section teach-result"><div className="eyebrow">Teach PhotoSift</div><h1>What your labels say</h1><p className="muted-copy">{formatCount(rows.length)} labels recorded. Labels describe content; they are separate from Keep and Clutter decisions.</p>
-      <div className="calibration-card"><h2>How often PhotoSift’s group matched your label</h2>{byGroup.length ? byGroup.map(({ group, total, correct }) => <div className="precision-row" key={group.id}><span>{group.name}</span><strong>{correct} of {total} matched ({Math.round(correct / total * 100)}%)</strong></div>) : <p>No labels yet.</p>}<p>{!rows.length ? 'Nothing to save yet.' : saving.data ? `Saved as sample ${saving.data.id.slice(0, 8)}: ${formatCount(saving.data.train)} to choose cut-offs, ${formatCount(saving.data.test)} held out to test them, kept apart across ${formatCount(saving.data.groups)} moments. Run the comparison under Settings, Models. Nothing changes until you promote an index there.` : saving.error ? `Couldn’t save these labels: ${errorText(saving.error)}` : 'Saving these labels…'}</p></div>
-      <div className="button-row"><button type="button" className="primary-action" onClick={() => { setDone(false); setIndex(0); setLabels({}); }}>Label another sample</button><button type="button" className="secondary-button" onClick={() => go('/review')}>Back to review</button></div></section>;
+      <div className="calibration-card"><h2>How often PhotoSift’s group matched your label</h2>{byGroup.length ? byGroup.map(({ group, total, correct }) => <div className="precision-row" key={group.id}><span>{group.name}</span><strong>{correct} of {total} matched ({Math.round(correct / total * 100)}%)</strong></div>) : <p>No labels yet.</p>}<p>{!rows.length ? 'Nothing to save yet.' : saving.data ? `Saved with your earlier labels, ${formatCount(saving.data.members)} in all: ${formatCount(saving.data.train)} to choose cut-offs, ${formatCount(saving.data.test)} held out to test them, kept apart across ${formatCount(saving.data.groups)} moments. Run the comparison under Settings, Models. Nothing changes until you promote an index there.` : saving.error ? `Couldn’t save these labels: ${errorText(saving.error)}` : 'Saving these labels…'}</p></div>
+      <div className="button-row"><button type="button" className="primary-action" disabled={saving.isFetching} onClick={() => { setDone(false); setIndex(0); setLabels({}); void request.refetch(); }}>Label another sample</button><button type="button" className="secondary-button" onClick={() => go('/review')}>Back to review</button></div></section>;
   }
   return <section className="teach-page"><div className="teach-heading"><div><div className="eyebrow">Optional · calibration</div><h1>Teach PhotoSift</h1><p>{index + 1} of {sample.length} · about {Math.max(1, Math.ceil((sample.length - index) * 1.5 / 60))} minutes left · Backspace goes back</p></div><button type="button" className="quiet-action" onClick={() => setDone(true)}>Finish and see results</button></div>
     <div className="teach-progress" role="progressbar" aria-valuenow={index + 1} aria-valuemin={1} aria-valuemax={sample.length}><span style={{ width: `${(index + 1) / sample.length * 100}%` }}/></div>

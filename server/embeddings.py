@@ -412,6 +412,31 @@ def save_sample(c, request):
     return {"id": identifier, **sample_summary(members)}
 
 
+def add_labels(c, request):
+    """Save a Teach round on top of every earlier label, as one new frozen sample."""
+    latest = c.execute(
+        "SELECT members FROM comparison_samples ORDER BY created_at DESC,rowid DESC LIMIT 1"
+    ).fetchone()
+    labels = {
+        member["contentId"]: member["category"]
+        for member in (json.loads(latest[0]) if latest else [])
+    }
+    # A photo labelled again keeps only its newest label.
+    labels.update({member.contentId: member.category for member in request.members})
+    if len(labels) > 10000:
+        raise HTTPException(422, "A sample holds at most 10000 labels")
+    # Splits are worked out again over all labels, so a moment stays on one side.
+    return save_sample(
+        c,
+        ComparisonSample(
+            members=[
+                SampleMember(contentId=content, category=category)
+                for content, category in labels.items()
+            ]
+        ),
+    )
+
+
 def sample_summary(members):
     return {
         "members": len(members),

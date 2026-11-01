@@ -142,6 +142,48 @@ def test_labels_without_splits_keep_each_moment_on_one_side(library):
     }
 
 
+def test_teach_rounds_add_up_and_show_new_photos(library):
+    client, db, _, contents = library
+    set_dates(db, {c: f"2024-05-{i + 1:02}T10:00:00" for i, c in enumerate(contents)})
+
+    def sample_of(limit):
+        page = client.get(
+            "/api/photos",
+            params={"sort": "content", "unlabelled": True, "limit": limit},
+        ).json()
+        return [photo["contentId"] for photo in page["items"]], page["total"]
+
+    # Before any label, nothing is left out.
+    first, total = sample_of(8)
+    assert len(first) == 8 and total == 24
+    round_one = [{"contentId": c, "category": "personal"} for c in first[:4]]
+    round_one += [{"contentId": c, "category": "screenshots"} for c in first[4:]]
+    saved = client.post("/api/comparison/labels", json={"members": round_one})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["members"] == 8
+
+    second, total = sample_of(8)
+    assert total == 16 and not set(first) & set(second)
+    round_two = [{"contentId": c, "category": "memes"} for c in second]
+    # Relabelling an earlier photo replaces its label instead of counting it twice.
+    round_two.append({"contentId": first[0], "category": "memes"})
+    saved = client.post("/api/comparison/labels", json={"members": round_two})
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["members"] == 16
+    assert body["categories"] == {"personal": 3, "screenshots": 4, "memes": 9}
+    assert body["train"] + body["test"] == 16
+    frozen = {m["contentId"]: m for m in members_of(db, body["id"])}
+    assert frozen[first[0]]["category"] == "memes"
+    assert set(frozen) == set(first) | set(second)
+    # The new total is what the comparison uses, and earlier samples stay as they were.
+    with db.read() as c:
+        assert c.execute("SELECT COUNT(*) FROM comparison_samples").fetchone()[0] == 2
+    # Nothing was marked as a decision, and normal views still list labelled photos.
+    assert client.get("/api/photos", params={"limit": 1}).json()["total"] == 24
+    assert sample_of(500)[1] == 8
+
+
 def test_existing_event_is_the_split_group_and_events_stay_apart(library):
     client, db, _, contents = library
     with db.write() as c:

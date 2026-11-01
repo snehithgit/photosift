@@ -1065,6 +1065,11 @@ def create_app(db_path=None, *, agent_token=None):
         with db.read() as c:
             return embeddings.overview(c)
 
+    @app.post("/api/comparison/labels")
+    def comparison_labels(request: embeddings.ComparisonSample):
+        with db.write() as c:
+            return embeddings.add_labels(c, request)
+
     @app.post("/api/comparison/samples")
     def comparison_sample(request: embeddings.ComparisonSample):
         with db.write() as c:

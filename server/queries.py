@@ -87,6 +87,10 @@ def where(query: PhotoQuery):
         params.append(decision)
     if query.hideSetAside:
         clauses.append("b.decision!='clutter'")
+    if query.unlabelled:
+        clauses.append(
+            "b.content_id NOT IN (SELECT json_extract(m.value,'$.contentId') FROM json_each((SELECT members FROM comparison_samples ORDER BY created_at DESC,rowid DESC LIMIT 1)) m)"
+        )
     if query.q:
         clauses.append(
             "(instr(lower(b.filename),lower(?))>0 OR EXISTS(SELECT 1 FROM file_instances f JOIN roots r ON r.id=f.root_id WHERE f.content_id=b.content_id AND instr(lower(r.path||'/'||f.path),lower(?))>0))"

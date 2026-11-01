@@ -107,6 +107,8 @@ class PhotoQuery(Contract):
     reviewed: bool = False
     # Event views organise what is kept: photos set aside drop out of their cards and counts.
     hideSetAside: bool = False
+    # Teach leaves out what the owner has already labelled.
+    unlabelled: bool = False
     sort: Literal["default", "margin", "date", "size", "name", "content"] = "default"
     by: Literal["none", "folder", "month", "event"] = "none"
     page: int = Field(default=1, ge=1)
