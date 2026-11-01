@@ -6,14 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "photosift"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115,<1", "pydantic>=2,<3", "uvicorn>=0.30,<1"]
+dependencies = ["fastapi>=0.115,<1", "pydantic>=2,<3", "uvicorn>=0.30,<1", "pillow>=11,<13", "numpy>=2,<3"]
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "httpx>=0.27,<1"]
 dev = ["ruff>=0.17,<1"]
+agent = ["httpx>=0.27,<1", "opencv-python-headless>=4.10,<5"]
 
 [tool.setuptools.packages.find]
-include = ["server*", "worker*"]
+include = ["server*", "worker*", "agent*"]
 
 [tool.setuptools.package-data]
 server = ["migrations/*.sql"]

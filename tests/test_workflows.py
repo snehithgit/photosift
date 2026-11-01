@@ -189,14 +189,14 @@ def test_frozen_export_plan_approval_manifest_and_no_source_or_destination_write
         ),
         202,
     )
-    assert run["state"] == "unavailable" and run["copied"] == run["verified"] == 0
+    assert run["state"] == "queued" and run["copied"] == run["verified"] == 0
     assert_ok(client.get("/api/export/runs/" + run["id"]))
     manifest = assert_ok(client.get("/api/export/runs/" + run["id"] + "/manifest"))
     assert manifest["verified"] is False
     assert all(row["state"] == "pending" for row in manifest["entries"])
     csv = client.get("/api/export/runs/" + run["id"] + "/manifest?format=csv")
     assert csv.status_code == 200 and "contentId,source,destination,sha256" in csv.text
-    assert client.post("/api/export/runs/" + run["id"] + "/rollback").status_code == 501
+    assert client.post("/api/export/runs/" + run["id"] + "/rollback").status_code == 200
     reloaded = TestClient(create_app(db.path))
     assert (
         assert_ok(reloaded.get("/api/export/plans/" + plan["id"]))["rows"]

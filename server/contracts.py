@@ -26,7 +26,7 @@ class Contract(BaseModel):
 
 
 class Evidence(Contract):
-    source: Literal["rule", "siglip2", "yunet", "d3nano"]
+    source: Literal["rule", "siglip2", "mobileclip2", "yunet", "d3nano"]
     text: str
     strength: Literal["strong", "weak", "small_margin", "not_checked"]
 
@@ -87,6 +87,12 @@ class PhotoQuery(Contract):
     folder: str = ""
     group: GroupId | None = None
     event: str | None = None
+    documentType: (
+        Literal[
+            "Papers", "Receipts and bills", "IDs", "Notes and whiteboards", "Slides"
+        ]
+        | None
+    ) = None
     band: Literal["all", "high", "medium", "low"] = "all"
     origin: Literal[
         "all", "camera", "screenshot", "forwarded", "downloaded", "edited", "unknown"
@@ -119,6 +125,10 @@ class RootInput(Contract):
 
 class InventoryQuery(PhotoQuery):
     state: Literal["available", "unsupported", "missing", "unreadable"] | None = None
+
+
+class DuplicateQuery(PhotoQuery):
+    kind: Literal["all", "exact", "possible", "burst"] = "all"
 
 
 class SearchQuery(PhotoQuery):
@@ -240,3 +250,8 @@ class ResultInput(LeaseInput):
     fingerprint: str
     sha256: str
     payload: dict
+
+
+class FailureInput(LeaseInput):
+    state: Literal["failed", "paused"]
+    reason: str = Field(min_length=1, max_length=1000)

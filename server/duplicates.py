@@ -20,12 +20,27 @@ def list_sets(c, query):
         GROUP BY duplicate_set,group_id HAVING COUNT(*)>1
     ) """
     )
+    kind = getattr(query, "kind", "all")
+    kind_filter = (
+        ""
+        if kind == "all"
+        else " WHERE kind=?"
+        if kind == "exact"
+        else " WHERE kind='possible' AND duplicate_set "
+        + ("LIKE" if kind == "burst" else "NOT LIKE")
+        + " 'burst-%'"
+    )
+    kind_params = [kind] if kind == "exact" else []
     total = c.execute(
-        sets + "SELECT COUNT(*) FROM candidate_sets", [*params, *params]
+        sets + "SELECT COUNT(*) FROM candidate_sets" + kind_filter,
+        [*params, *params, *kind_params],
     ).fetchone()[0]
     rows = c.execute(
-        sets + "SELECT * FROM candidate_sets ORDER BY id LIMIT ? OFFSET ?",
-        [*params, *params, query.limit, (query.page - 1) * query.limit],
+        sets
+        + "SELECT * FROM candidate_sets"
+        + kind_filter
+        + " ORDER BY id LIMIT ? OFFSET ?",
+        [*params, *params, *kind_params, query.limit, (query.page - 1) * query.limit],
     ).fetchall()
     items = []
     for row in rows:

@@ -1,6 +1,7 @@
 # 02 · Canonical processing pipeline
 
-Status: canonical design contract; Phase 1 backend foundation is implemented. Updated 1 November 2026.
+Status: canonical contract; inventory/review, preparation, comparison infrastructure and verified
+export are implemented. Native embedding execution/selection and D3 remain pending. Updated 1 November 2026.
 See [backend guide](../server/README.md) for tested capabilities and later-phase boundaries.
 This is the processing contract for the fresh PhotoSift project. It supersedes conflicting pipeline examples in the early research notes. Architecture: [01](01-architecture.md). Model contracts: [03](03-models.md). Review/export: [04](04-review-and-export.md).
 

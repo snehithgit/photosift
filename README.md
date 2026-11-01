@@ -1,8 +1,10 @@
 # PhotoSift
 
-> Status: finished frontend mock plus a tested Phase 1 backend foundation.
+> Status: finished frontend mock plus tested inventory/review, laptop preparation,
+> embedding-comparison infrastructure and verified-copy backend execution.
 > Run the API and Zima worker with the [backend guide](server/README.md).
-> The frontend still uses mock data; integration is Phase 2.
+> The frontend still uses mock data and is deliberately unchanged. Model selection and the
+> D3 protocol remain pending; no GPU model performance is claimed.
 
 PhotoSift is a local AI photo-decluttering app for huge personal libraries. It groups
 personal photos, documents, food, screenshots and memes so you can make bulk
@@ -41,5 +43,5 @@ organised folders for Immich.
 
 > PhotoSift is a **fresh project**: it does not extend or reuse any existing repository.
 > The [canonical pipeline](docs/02-pipeline.md) now defines the working design: SQLite WAL on Zima, a laptop pull agent, one primary embedding index, protection before Clutter suggestions, and copy-only export.
-> Docs 07–08 are research/background notes, not measured product guarantees. AI preparation,
-> model adapters and checksum-verified copying remain later phases.
+> Docs 07–08 are research/background notes, not measured product guarantees. Preparation and
+> verified copying are implemented; native embedding/D3 runtime integration still needs validation.

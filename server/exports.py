@@ -215,7 +215,7 @@ def plan(c, identifier, page=1, limit=180):
         "rows": rows,
         "page": page,
         "limit": limit,
-        "executorAvailable": False,
+        "executorAvailable": True,
     }
 
 
@@ -236,7 +236,7 @@ def approve(c, identifier, request):
         raise HTTPException(409, "Insufficient capacity at plan creation; regenerate")
     c.execute("UPDATE export_plans SET state='approved' WHERE id=?", (identifier,))
     c.execute(
-        "INSERT INTO export_runs(id,plan_id,state,created_at,error) VALUES (?,?,'unavailable',?,'Verified copy executor belongs to the later export phase')",
+        "INSERT INTO export_runs(id,plan_id,state,created_at,error) VALUES (?,?,'queued',?,NULL)",
         (identifier, identifier, now()),
     )
     c.execute(
@@ -277,7 +277,7 @@ def run(c, identifier):
         "copied": counts.get("copied", 0) + counts.get("verified", 0),
         "verified": counts.get("verified", 0),
         "failed": counts.get("failed", 0),
-        "executorAvailable": False,
+        "executorAvailable": True,
     }
 
 
@@ -311,6 +311,6 @@ def manifest(c, identifier, format):
     return {
         "runId": identifier,
         "state": r["state"],
-        "verified": False,
+        "verified": bool(rows) and all(row["state"] == "verified" for row in rows),
         "entries": [{**row, "snapshot": json.loads(row["snapshot"])} for row in rows],
     }

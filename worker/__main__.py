@@ -4,6 +4,7 @@ import time
 
 from server.db import Database
 from server.review import process_bulk, process_undo
+from worker.exporter import process_export
 from worker.scanner import scan
 
 
@@ -16,7 +17,7 @@ def tick(db, hash_mib_per_second=32):
     if row:
         scan(db, row[0], hash_mib_per_second=hash_mib_per_second)
         return True
-    return process_undo(db) or process_bulk(db)
+    return process_undo(db) or process_bulk(db) or process_export(db)
 
 
 def main():

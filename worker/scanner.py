@@ -220,14 +220,16 @@ def scan(db, scan_id, owner="zima", lease_seconds=300, hash_mib_per_second=32):
                             "INSERT OR IGNORE INTO decisions(content_id) VALUES (?)",
                             (digest,),
                         )
-                        # Explicit foundation preparation fingerprint: no model is chosen here.
+                        spec = c.execute(
+                            "SELECT fingerprint FROM stage_specs WHERE stage='prepare' AND active=1"
+                        ).fetchone()
                         c.execute(
                             "INSERT OR IGNORE INTO stage_jobs(id,content_id,stage,fingerprint) VALUES (?,?,?,?)",
                             (
                                 uid(),
                                 digest,
                                 "prepare",
-                                "prepare-contract-v1:unconfigured",
+                                spec[0] if spec else "prepare-contract-v1:unconfigured",
                             ),
                         )
                 seen += 1

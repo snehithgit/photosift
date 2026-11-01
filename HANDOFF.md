@@ -35,7 +35,7 @@ C:\Users\snehith\Documents\code\photosift\
 
 The folder is now a git repository. The original documentation and finished mock were committed
 first as `9e088c6`. `origin` is `https://github.com/snehithgit/photosift.git`.
-The Python backend is in `server/`, the Zima executor in `worker/`, and pytest tests in `tests/`.
+The Python backend is in `server/`, the Zima executor in `worker/`, the laptop executor in `agent/`, and pytest tests in `tests/`.
 See [server/README.md](server/README.md) for commands, API contracts and explicit phase boundaries.
 
 ## 3. The mock web app (`web/`) — finished and verified
@@ -119,7 +119,9 @@ Build in phases; each phase ends with tests and a runnable result. Do not start 
 
 **Phase 2 — Connect the frontend**
 
-This is the next implementation task after the Phase 1 test gate. It has **not** been started.
+Frontend integration is **deferred at the owner's request**. An attempted integration was
+fully reverted; `web/` is exactly the finished original mock. Do not redesign or reconnect it
+while continuing backend work. Current backend progress and remaining gates are in section 8.
 - Replace the Zustand mock data with TanStack Query calls to the API, keeping a `VITE_MOCK=1` mode that still runs
   on the fake dataset. Keep every verified behaviour from section 3.
 
@@ -136,6 +138,8 @@ embedding comparison and primary index, D3 Nano adapter, protection gate and tri
 - Report honestly: say what was tested, what passed, and what was not verified.
 
 ## 7. Phase 1 implementation notes
+
+Historical Phase 1 snapshot; section 8 supersedes its implementation-status boundaries.
 
 - Python 3.12/FastAPI/Pydantic, four immutable additive SQLite WAL migrations; concurrent
   API/worker startup is tested. Current installed versions are pinned in `requirements.lock`.
@@ -167,3 +171,52 @@ embedding comparison and primary index, D3 Nano adapter, protection gate and tri
   Ruff checks and formatting pass. One Starlette/httpx test-client deprecation warning remains.
 - No real library/share, Zima deployment, GPU inference, D3 schema or actual copy IO was tested.
   No real-hardware performance is claimed. Frontend source was not changed.
+
+## 8. Backend continuation (1 November 2026)
+
+The owner requested remaining backend work while keeping the restored frontend unchanged.
+They explicitly said to **keep primary embedding selection pending**. They asked us to check
+the docs for D3; a full docs search confirmed that the `/v1/systemone` payload schema is still
+absent and explicitly marked unknown. No engine/protocol/model was silently substituted.
+
+Implemented and tested beyond Phase 1:
+
+- Laptop preparation pull agent (`python -m agent`): mapped read-only roots, source version/hash
+  verification, oriented Pillow decode, EXIF/camera/GPS, bounded metadata-free WebP cache,
+  pHash/dHash and quality signals. Optional checksum-pinned YuNet; missing/failed detector
+  remains Unknown. No OCR. See [agent guide](agent/README.md).
+- Full preparation fingerprint registration/activation, authenticated claims/renewals/failures,
+  source-instance-bound typed results, idempotent replay, request-size bounds, atomic cache
+  publication and matching cache/metadata reactivation. Accepted per-image work survives restart.
+- Isolated embedding index registry, typed normalized vectors, explicit queueing of prepared
+  contents, frozen comparison labels and event-group splits, prompt packs, held-out category
+  metrics and explicit backfill-gated primary promotion. **Native encoder execution and real
+  comparison/throughput remain pending**; test vectors are arithmetic fixtures, not model results.
+- Conservative prompt scoring with explicit report/threshold provenance and bounded batches,
+  independent content grouping and user decisions, Unknown protection holds, no personal/document
+  Clutter suggestions; unresolved checks queue an explicitly unconfigured D3 assessment.
+- Same-primary-index/time/pHash neighbor suggestions are unticked and stay within an effective
+  group. Manual group moves remove stale duplicate membership. Time-only event suggestions
+  preserve existing event edits and do not infer places/trips. Date-only/unknown time is excluded.
+- **Real verified export executor** in `worker/exporter.py`: source/output checksums, independent
+  copies, fsync, no-overwrite atomic publication, journaled ownership, publication-crash recovery,
+  pause/resume/retry, atomic manifests, and safe rollback preserving changed/unowned outputs.
+  Approval now queues actual copies; run the Zima worker to execute them. Old unavailable runs
+  need explicit resume. Original files are never changed; interrupted temporary files are
+  preserved rather than recursively cleaned up. Windows tested; Linux/SMB still unverified.
+- Migrations `005`–`008` extend the original four without editing them. Dependencies/commands
+  are in the backend/agent guides. The backend additions retained from the reverted frontend
+  attempt (document filters, related photos, exact-set pagination, scope-correct events and
+  serving a built UI) were regression tested; `web/` itself remains untouched.
+
+Still pending: actual primary checkpoint/runtime comparison and selection; native image/text
+encoder execution and new semantic-text query encoding; the real D3 SystemOne fixture/adapter;
+real YuNet weights/accuracy, GPU/VRAM/throughput, Zima/share/Linux deployment checks. Optional
+personal-classifier training and Immich API integration are later scope. Do not call these done.
+
+Verification for this continuation: **59 passed, 1 skipped** on Windows/Python 3.12.10;
+Ruff checks/formatting and `pip check` pass. The skip is Windows symbolic-link creation
+privilege; junction refusal is tested. The live smoke now runs API, Zima worker and laptop
+preparation agent as separate real HTTP processes. All copy/preparation tests used temporary
+fixture libraries. One Starlette/httpx test-client deprecation warning remains. `web/` has
+no changes compared with the restored committed frontend.

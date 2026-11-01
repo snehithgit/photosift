@@ -18,7 +18,7 @@ def test_concurrent_fresh_database_startup(tmp_path):
             databases = list(pool.map(Database, [path] * 4))
         with databases[0].read() as c:
             assert (
-                c.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
+                c.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] >= 5
             )
             assert c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 

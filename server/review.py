@@ -217,6 +217,10 @@ def patch_photo(c, content_id, request):
     if request.decision is not None:
         set_decision(c, content_id, request.decision, action_id)
     elif request.groupId is not None:
+        if request.groupId != p["groupId"]:
+            c.execute(
+                "UPDATE photos SET duplicate_set=NULL WHERE content_id=?", (content_id,)
+            )
         before = c.execute(
             "SELECT manual_group FROM group_assignments WHERE content_id=?",
             (content_id,),
@@ -363,7 +367,7 @@ def apply_undo_batch(c, job_id, batch_size):
                             (current_event[0],),
                         )
                     c.execute(
-                        "INSERT INTO event_members VALUES (?,?) ON CONFLICT(content_id) DO UPDATE SET event_id=excluded.event_id",
+                        "INSERT INTO event_members(content_id,event_id) VALUES (?,?) ON CONFLICT(content_id) DO UPDATE SET event_id=excluded.event_id,source='manual'",
                         (row["content_id"], before),
                     )
                     c.execute(

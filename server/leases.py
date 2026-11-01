@@ -9,7 +9,11 @@ from server.db import packed, uid
 
 def claim(c, request):
     if request.fingerprint.endswith(":unconfigured"):
-        raise HTTPException(409, "Preparation adapter is not configured in Phase 1")
+        raise HTTPException(409, "Stage adapter is not configured for this fingerprint")
+    c.execute(
+        "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
+        (request.owner, time.time(), request.stage, request.fingerprint),
+    )
     row = c.execute(
         "SELECT * FROM stage_jobs WHERE stage=? AND fingerprint=? AND (state='queued' OR state='running' AND expires<?) ORDER BY id LIMIT 1",
         (request.stage, request.fingerprint, time.time()),
@@ -30,6 +34,14 @@ def claim(c, request):
     c.execute(
         "UPDATE stage_jobs SET state='running',owner=?,token=?,expires=?,attempt=attempt+1,error=NULL WHERE id=?",
         (request.owner, token, expiry, row["id"]),
+    )
+    c.execute(
+        "UPDATE stage_jobs SET source_instance=?,source_size=?,source_mtime_ns=? WHERE id=?",
+        (source["id"], source["size"], source["mtime_ns"], row["id"]),
+    )
+    c.execute(
+        "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
+        (request.owner, time.time(), request.stage, request.fingerprint),
     )
     return dict(
         jobId=row["id"],
@@ -63,7 +75,11 @@ def valid_lease(c, job_id, request):
 
 
 def renew(c, job_id, request):
-    valid_lease(c, job_id, request)
+    job = valid_lease(c, job_id, request)
+    c.execute(
+        "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
+        (request.owner, time.time(), job["stage"], job["fingerprint"]),
+    )
     expiry = time.time() + 120
     c.execute("UPDATE stage_jobs SET expires=? WHERE id=?", (expiry, job_id))
     return {"expires": expiry}

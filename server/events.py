@@ -23,14 +23,22 @@ def get_event(c, identifier):
 
 def list_events(c, query):
     condition, params = where(query)
-    ids = c.execute(
+    rows = c.execute(
         BASE
-        + "SELECT DISTINCT event_id FROM base b WHERE "
+        + "SELECT e.id,e.name,e.place,e.status,e.version,e.parent_trip_id,MIN(b.capture_date) start,MAX(b.capture_date) end,COUNT(*) photoCount,MIN(b.content_id) coverId FROM base b JOIN events e ON e.id=b.event_id WHERE "
         + condition
-        + " AND event_id IS NOT NULL",
+        + " AND e.archived=0 GROUP BY e.id ORDER BY start DESC,e.id",
         params,
     ).fetchall()
-    return [get_event(c, r[0]) for r in ids]
+    result = []
+    for row in rows:
+        item = dict(row)
+        for key in ("start", "end", "place", "coverId"):
+            item[key] = item[key] or ""
+        if item["parent_trip_id"]:
+            item["tripId"] = item["parent_trip_id"]
+        result.append(item)
+    return result
 
 
 def check_version(c, identifier, expected):
@@ -70,7 +78,10 @@ def create_event(c, request):
         (identifier, request.name),
     )
     for content_id in identifiers:
-        c.execute("INSERT INTO event_members VALUES (?,?)", (content_id, identifier))
+        c.execute(
+            "INSERT INTO event_members(content_id,event_id) VALUES (?,?)",
+            (content_id, identifier),
+        )
         version = (
             c.execute(
                 "SELECT review_version FROM photos WHERE content_id=?", (content_id,)

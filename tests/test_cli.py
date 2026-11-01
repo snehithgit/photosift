@@ -10,14 +10,20 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from PIL import Image
+
+from agent.prepare import configuration
+
 
 def test_live_api_and_worker_cli(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
-    (source / "photo.jpg").write_bytes(b"live CLI source")
+    Image.new("RGB", (80, 40), "blue").save(source / "photo.jpg")
+    original = (source / "photo.jpg").read_bytes()
     environment = {
         **os.environ,
         "PHOTOSIFT_DB": str(tmp_path / "app" / "state.sqlite3"),
+        "PHOTOSIFT_AGENT_TOKEN": "live-test-token",
     }
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -82,7 +88,42 @@ def test_live_api_and_worker_cli(tmp_path):
         assert result.returncode == 0, result.stdout + result.stderr
         assert request("/api/scans/" + scan["id"])["state"] == "done"
         assert request("/api/photos")["total"] == 1
-        assert (source / "photo.jpg").read_bytes() == b"live CLI source"
+        settings = tmp_path / "agent.json"
+        settings.write_text(
+            json.dumps(
+                {
+                    "serverUrl": base,
+                    "owner": "cli-laptop",
+                    "rootMappings": {root["id"]: str(source)},
+                    "preparation": configuration().model_dump(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "agent",
+                "--config",
+                str(settings),
+                "--configure-preparation",
+                "--once",
+            ],
+            cwd=repository,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=25,
+            creationflags=flags,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        photos = request("/api/photos")
+        assert photos["items"][0]["width"] == 80 and photos["items"][0]["height"] == 40
+        assert photos["items"][0]["thumbUrl"]
+        assert request("/api/status")["laptop"]["state"] == "online"
+        assert (source / "photo.jpg").read_bytes() == original
     finally:
         process.terminate()
         process.communicate(timeout=10)

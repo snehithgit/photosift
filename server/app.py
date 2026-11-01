@@ -2,22 +2,27 @@ import json
 import os
 import secrets
 import sqlite3
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from server import duplicates as duplicate_queries
-from server import events, exports, leases, review
+from server import embeddings, events, exports, leases, pipeline, review, suggestions
 from server.contracts import (
     AppearanceSettings,
     ApprovalInput,
     BulkInput,
     ClaimInput,
+    DuplicateQuery,
     EventInput,
     EventPatch,
     ExportInput,
+    FailureInput,
     GroupId,
     InventoryQuery,
     LeaseInput,
@@ -35,6 +40,7 @@ from server.contracts import (
 )
 from server.db import Database, action, audit, bump, now, packed, revision, uid
 from server.paths import checked_path, clean_folder, overlap
+from server.preparation_contract import PreparationConfig
 from server.queries import (
     BASE,
     detail,
@@ -49,6 +55,9 @@ from worker.scanner import queue_scan
 
 def create_app(db_path=None, *, agent_token=None):
     app = FastAPI(title="PhotoSift foundation", version="0.1.0")
+    from server.http_limits import BoundedBody
+
+    app.add_middleware(BoundedBody)
     db = Database(db_path or os.environ.get("PHOTOSIFT_DB", ".data/photosift.sqlite3"))
     app.state.db = db
     configured_token = agent_token or os.environ.get("PHOTOSIFT_AGENT_TOKEN")
@@ -75,18 +84,29 @@ def create_app(db_path=None, *, agent_token=None):
             busy = c.execute(
                 "SELECT COUNT(*) FROM bulk_jobs WHERE state!='done'"
             ).fetchone()[0]
+            contact = c.execute(
+                "SELECT MAX(last_contact) FROM agent_contacts"
+            ).fetchone()[0]
         for root in roots:
             try:
                 root["available"] = checked_path(root["path"]).is_dir()
             except (OSError, ValueError):
                 root["available"] = False
         return {
-            "laptop": {"state": "offline", "lastContact": None},
+            "laptop": {
+                "state": "online"
+                if contact and time.time() - contact < 60
+                else "offline",
+                "lastContact": datetime.fromtimestamp(contact, timezone.utc).isoformat()
+                if contact
+                else None,
+            },
             "sources": roots,
             "activeBulkJobs": busy,
             "phase": 1,
             "inferenceAvailable": False,
-            "exportExecutorAvailable": False,
+            "exportExecutorAvailable": True,
+            "preparationAvailable": True,
         }
 
     @app.get("/api/roots")
@@ -459,7 +479,7 @@ def create_app(db_path=None, *, agent_token=None):
             return events.split(c, identifier, request)
 
     @app.get("/api/duplicates")
-    def duplicates(query: Annotated[PhotoQuery, Query()]):
+    def duplicates(query: Annotated[DuplicateQuery, Query()]):
         with db.read() as c:
             return duplicate_queries.list_sets(c, query)
 
@@ -488,6 +508,14 @@ def create_app(db_path=None, *, agent_token=None):
                 "SELECT value FROM settings WHERE section='analyze'"
             ).fetchone()
             control = json.loads(control[0]) if control else {"state": "running"}
+            primary = c.execute(
+                "SELECT id FROM embedding_indexes WHERE role='primary' AND status='ready'"
+            ).fetchone()
+            prep_configured = bool(
+                c.execute(
+                    "SELECT 1 FROM stage_specs WHERE stage='prepare' AND active=1"
+                ).fetchone()
+            )
             inventory_counts = {
                 r["state"]: r["n"]
                 for r in c.execute(
@@ -516,6 +544,10 @@ def create_app(db_path=None, *, agent_token=None):
                 state = "paused"
             if counts.get("failed"):
                 state = "failed"
+            elif counts.get("running"):
+                state = "running"
+            elif stage == "prepare" and not prep_configured or stage == "assess":
+                state = "model_unavailable"
             if stage == "inventory":
                 counts = inventory_counts
                 total = sum(counts.values())
@@ -550,7 +582,7 @@ def create_app(db_path=None, *, agent_token=None):
             "items": result,
             "scans": scans,
             "control": control,
-            "primaryIndex": None,
+            "primaryIndex": primary[0] if primary else None,
             "d3": {
                 "endpoint": "/v1/systemone",
                 "schema": "unknown",
@@ -619,9 +651,8 @@ def create_app(db_path=None, *, agent_token=None):
     @app.get("/api/search")
     def search(query: Annotated[SearchQuery, Query()]):
         if query.like:
-            raise HTTPException(
-                503, "Image similarity requires the later primary embedding index"
-            )
+            with db.read() as c:
+                return embeddings.similar(c, query.like, query)
         with db.read() as c:
             return {
                 **list_photos(c, query),
@@ -781,12 +812,60 @@ def create_app(db_path=None, *, agent_token=None):
 
     @app.post("/api/export/runs/{identifier}/{operation}")
     def export_operation(identifier: str, operation: str):
+        with db.write() as c:
+            current = exports.run(c, identifier)
+            if operation == "pause" and current["state"] in ("queued", "running"):
+                state = "paused"
+            elif operation in ("resume", "retry") and current["state"] in (
+                "paused",
+                "failed",
+                "unavailable",
+            ):
+                state = "queued"
+                c.execute(
+                    "UPDATE export_operations SET state=CASE WHEN output_hash IS NOT NULL AND temporary_identity IS NOT NULL THEN 'ready' ELSE 'pending' END,error=NULL WHERE run_id=? AND state='failed'",
+                    (identifier,),
+                )
+            elif operation == "rollback" and current["state"] in (
+                "done",
+                "failed",
+                "paused",
+                "queued",
+                "running",
+            ):
+                state = "rollback-requested"
+            else:
+                raise HTTPException(
+                    409, "Export control does not apply to the current run state"
+                )
+            c.execute(
+                "UPDATE export_runs SET state=?,error=NULL WHERE id=?",
+                (state, identifier),
+            )
+            action_id = action(c, "Export " + operation, identifier)
+            audit(c, action_id, None, "export_control", current["state"], state)
+            return exports.run(c, identifier)
+
+    @app.get("/api/export/runs/{identifier}/journal")
+    def export_journal(
+        identifier: str,
+        page: int = Query(1, ge=1),
+        limit: int = Query(100, ge=1, le=500),
+    ):
         with db.read() as c:
             exports.run(c, identifier)
-        raise HTTPException(
-            501,
-            "Verified copy, resume and rollback executor is reserved for the later export phase",
-        )
+            return {
+                "items": [
+                    dict(row)
+                    for row in c.execute(
+                        "SELECT * FROM export_journal WHERE run_id=? ORDER BY id LIMIT ? OFFSET ?",
+                        (identifier, limit, (page - 1) * limit),
+                    )
+                ],
+                "total": c.execute(
+                    "SELECT COUNT(*) FROM export_journal WHERE run_id=?", (identifier,)
+                ).fetchone()[0],
+            }
 
     @app.get("/api/media/{identifier}")
     def media(identifier: str, reveal: bool = False):
@@ -818,7 +897,171 @@ def create_app(db_path=None, *, agent_token=None):
 
     @app.post("/api/agent/jobs/{identifier}/result", dependencies=[Depends(agent)])
     def result(identifier: str, request: ResultInput):
+        with db.read() as c:
+            job = c.execute(
+                "SELECT stage FROM stage_jobs WHERE id=?", (identifier,)
+            ).fetchone()
+        if job and job["stage"] == "embed":
+            from pydantic import ValidationError
+
+            try:
+                with db.write() as c:
+                    return embeddings.accept(c, identifier, request)
+            except ValidationError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        return pipeline.submit_preparation(db, identifier, request)
+
+    @app.get("/api/indexes")
+    def embedding_indexes():
+        with db.read() as c:
+            return {
+                "items": [
+                    embeddings.get_index(c, row[0])
+                    for row in c.execute("SELECT id FROM embedding_indexes")
+                ]
+            }
+
+    @app.post("/api/indexes")
+    def register_index(request: embeddings.IndexConfig):
         with db.write() as c:
-            return leases.submit(c, identifier, request)
+            return embeddings.register(c, request)
+
+    @app.post("/api/indexes/{identifier}/queue")
+    def queue_embeddings(identifier: str, request: embeddings.QueueEmbeddings):
+        with db.write() as c:
+            return embeddings.queue(c, identifier, request)
+
+    @app.post("/api/comparison/samples")
+    def comparison_sample(request: embeddings.ComparisonSample):
+        with db.write() as c:
+            return embeddings.save_sample(c, request)
+
+    @app.post("/api/indexes/{identifier}/prompts")
+    def index_prompts(identifier: str, request: embeddings.PromptPack):
+        with db.write() as c:
+            return embeddings.save_prompts(c, identifier, request)
+
+    @app.post("/api/indexes/{identifier}/evaluate")
+    def evaluate_index(identifier: str, request: embeddings.EvaluationRequest):
+        with db.write() as c:
+            return embeddings.evaluate(c, identifier, request)
+
+    @app.post("/api/indexes/{identifier}/promote")
+    def promote_index(identifier: str, request: embeddings.PromoteIndex):
+        with db.write() as c:
+            return embeddings.promote(c, identifier, request)
+
+    @app.post("/api/pipeline/preparation/configure")
+    def configure_preparation(request: PreparationConfig):
+        with db.write() as c:
+            return pipeline.configure_preparation(c, request)
+
+    @app.post("/api/agent/jobs/{identifier}/fail", dependencies=[Depends(agent)])
+    def fail_stage(identifier: str, request: FailureInput):
+        with db.write() as c:
+            leases.valid_lease(c, identifier, request)
+            c.execute(
+                "UPDATE stage_jobs SET state=?,error=?,expires=NULL WHERE id=?",
+                (request.state, request.reason, identifier),
+            )
+        return {"state": request.state}
+
+    @app.get("/api/photos/{content_id}/related")
+    def related_photos(content_id: str, query: Annotated[PhotoQuery, Query()]):
+        with db.read() as c:
+            validate_scope(c, query)
+            p = detail(c, content_id)
+            condition, params = where(query)
+            rows = c.execute(
+                BASE
+                + "SELECT b.* FROM base b WHERE "
+                + condition
+                + " AND content_id!=? AND ((duplicate_set IS NOT NULL AND duplicate_set=? AND group_id=?) OR (event_id IS NOT NULL AND event_id=?)) ORDER BY content_id LIMIT 24",
+                [
+                    *params,
+                    content_id,
+                    p.get("duplicateSetId"),
+                    p["groupId"],
+                    p.get("eventId"),
+                ],
+            ).fetchall()
+            return {"items": [photo(c, row) for row in rows]}
+
+    # Serve the built client from the same origin; unknown API paths must remain JSON 404s.
+    @app.post("/api/pipeline/score")
+    def score_content(request: suggestions.ScoringRequest):
+        with db.write() as c:
+            return suggestions.score(c, request)
+
+    @app.post("/api/pipeline/suggest-neighbors")
+    def suggest_neighbors(request: suggestions.NeighborRequest):
+        with db.write() as c:
+            return suggestions.neighbors(c, request)
+
+    @app.post("/api/pipeline/suggest-events")
+    def suggest_events(request: suggestions.EventSuggestionRequest):
+        with db.write() as c:
+            return suggestions.events(c, request)
+
+    @app.get("/api/pipeline/jobs")
+    def pipeline_jobs(
+        root: str | None = None,
+        folder: str = "",
+        stage: str | None = None,
+        state: str | None = None,
+        page: int = Query(1, ge=1),
+        limit: int = Query(100, ge=1, le=500),
+    ):
+        try:
+            scope = PhotoQuery(root=root, folder=folder, decisions="all")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        with db.read() as c:
+            validate_scope(c, scope)
+            condition, params = where(scope)
+            if stage:
+                condition += " AND j.stage=?"
+                params.append(stage)
+            if state:
+                condition += " AND j.state=?"
+                params.append(state)
+            source = (
+                " FROM stage_jobs j JOIN base b ON b.content_id=j.content_id WHERE "
+                + condition
+            )
+            total = c.execute(BASE + "SELECT COUNT(*)" + source, params).fetchone()[0]
+            rows = c.execute(
+                BASE
+                + "SELECT j.id,j.content_id AS contentId,j.stage,j.fingerprint,j.state,j.error,j.attempt,j.owner,j.expires"
+                + source
+                + " ORDER BY j.id LIMIT ? OFFSET ?",
+                [*params, limit, (page - 1) * limit],
+            ).fetchall()
+            return {"items": [dict(row) for row in rows], "total": total, "page": page}
+
+    distribution = Path(__file__).resolve().parents[1] / "web" / "dist"
+    if (distribution / "assets").is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=distribution / "assets"),
+            name="frontend-assets",
+        )
+
+    @app.get("/{client_path:path}", include_in_schema=False)
+    def frontend(client_path: str):
+        if client_path == "api" or client_path.startswith("api/"):
+            raise HTTPException(404, "Unknown API endpoint")
+        if (
+            client_path == "photosift-mark.svg"
+            and (distribution / client_path).is_file()
+        ):
+            return FileResponse(distribution / client_path)
+        if not (distribution / "index.html").is_file():
+            raise HTTPException(
+                404, "Build the frontend first, or use the Vite development server"
+            )
+        return FileResponse(
+            distribution / "index.html", headers={"Cache-Control": "no-store"}
+        )
 
     return app

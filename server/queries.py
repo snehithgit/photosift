@@ -73,6 +73,9 @@ def where(query: PhotoQuery):
     if query.format != "all":
         clauses.append("lower(b.format)=lower(?)")
         params.append(query.format)
+    if query.documentType:
+        clauses.append("b.document_type=?")
+        params.append(query.documentType)
     decision = "all" if query.reviewed else query.decisions
     if decision != "all":
         clauses.append("b.decision=?")
@@ -113,7 +116,11 @@ def matched(c, query):
 def query_fingerprint(query, current_revision):
     return fingerprint(
         {
-            "query": query.model_dump(exclude={"page", "limit", "revision"}),
+            "query": {
+                key: getattr(query, key)
+                for key in PhotoQuery.model_fields
+                if key not in ("page", "limit", "revision")
+            },
             "revision": current_revision,
         }
     )
@@ -167,7 +174,7 @@ def photo(c, row):
     media = {
         m["kind"]: m["id"]
         for m in c.execute(
-            "SELECT id,kind FROM cached_media WHERE content_id=? ORDER BY rowid",
+            "SELECT id,kind FROM cached_media WHERE content_id=? ORDER BY (fingerprint=(SELECT fingerprint FROM stage_specs WHERE stage='prepare' AND active=1)),rowid",
             (row["content_id"],),
         )
     }
