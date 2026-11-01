@@ -1,0 +1,3 @@
+ALTER TABLE scan_runs ADD COLUMN owner TEXT;
+ALTER TABLE scan_runs ADD COLUMN token TEXT;
+ALTER TABLE scan_runs ADD COLUMN expires REAL;

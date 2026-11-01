@@ -33,7 +33,10 @@ C:\Users\snehith\Documents\code\photosift\
   web\                   the finished MOCK web app (frontend only, fake data)
 ```
 
-The folder is **not a git repository yet**. Run `git init` and make a first commit before changing anything.
+The folder is now a git repository. The original documentation and finished mock were committed
+first as `9e088c6`. `origin` is `https://github.com/snehithgit/photosift.git`.
+The Python backend is in `server/`, the Zima executor in `worker/`, and pytest tests in `tests/`.
+See [server/README.md](server/README.md) for commands, API contracts and explicit phase boundaries.
 
 ## 3. The mock web app (`web/`) — finished and verified
 
@@ -95,11 +98,11 @@ horizontal scroll and hides bulk actions and export approval.
    ask the owner; do not assume `/api/chat` or invent fields.
 10. **No OCR** in the first version.
 
-## 5. Next task: the backend (follow `docs/02-pipeline.md`)
+## 5. Build phases (follow `docs/02-pipeline.md`)
 
 Build in phases; each phase ends with tests and a runnable result. Do not start a phase before the previous one passes.
 
-**Phase 1 — Foundation (start here)**
+**Phase 1 — Foundation (implemented; see section 7)**
 - Create `server/` (Python 3.12, FastAPI, Pydantic, SQLite WAL on local disk) and `worker/`.
 - Schema (additive migrations, never edit an applied one): library roots, scan runs, file instances (path, size,
   mtime, state), contents (SHA-256, size), cached media, stage jobs with leases (owner, token, expiry, attempt),
@@ -115,6 +118,8 @@ Build in phases; each phase ends with tests and a runnable result. Do not start 
 - Server-side grouping for the grid (the mock only groups within one 180-photo page).
 
 **Phase 2 — Connect the frontend**
+
+This is the next implementation task after the Phase 1 test gate. It has **not** been started.
 - Replace the Zustand mock data with TanStack Query calls to the API, keeping a `VITE_MOCK=1` mode that still runs
   on the fake dataset. Keep every verified behaviour from section 3.
 
@@ -129,3 +134,36 @@ embedding comparison and primary index, D3 Nano adapter, protection gate and tri
 - Unknowns are listed in `docs/06-open-questions.md` (D3 Nano schema, Zima hardware, library size and share,
   Immich setup). Ask the owner instead of guessing.
 - Report honestly: say what was tested, what passed, and what was not verified.
+
+## 7. Phase 1 implementation notes
+
+- Python 3.12/FastAPI/Pydantic, four immutable additive SQLite WAL migrations; concurrent
+  API/worker startup is tested. Current installed versions are pinned in `requirements.lock`.
+- Read-only throttled SHA-256 inventory, content/path separation, incremental and verify modes,
+  file history, unsupported/unreadable/missing states, scan leases/recovery, subtree boundaries,
+  symlink/junction refusal and no missing reconciliation on partial/disconnected scans.
+- REST endpoints for the requested screens: group stats, filtered/paged photos and globally
+  grouped grids, details, frozen/versioned selections, durable idempotent bulk decisions,
+  optimistic single corrections, version-aware undo (large reversals are durable jobs), audit,
+  editable events, paged duplicate sets, library stats/tree/problems, analyze/status and settings.
+- Select-all requires `queryRevision` **and** `queryFingerprint` from the loaded photo query;
+  it returns a frozen exact count. Bulk/undo outcomes and conflicts survive process restart.
+  Clients use `reviewVersion` for single corrections; `decisionVersion` is still returned.
+- Export **contracts**: frozen plans, private-sensitive mapping, exclusions, collision renaming,
+  measured free space, plan-bound approval, persisted unavailable runs, pending operations and
+  explicitly unverified manifests. The real verified copier/rollback is still the later exporter
+  phase, **not** implemented. No copy success is simulated and no output files are written.
+- Stage dispatch foundation has authenticated claims/renewals and stale-lease rejection.
+  Actual result acceptance returns 501 until stage-specific validated adapters are built.
+  Scanner-created preparation jobs remain explicitly unconfigured. D3's schema stays unknown;
+  no OCR, inference, fallback model, semantic search or real media generation was added.
+- Newly inventoried photos have zero/unknown metadata, no fake thumbnails, and Awaiting analysis.
+  Protection age is unset and folder rules empty until explicitly configured. Positive sensitivity
+  or importance holds bulk membership independently of the mock's limited protection-reason enum.
+- Tests include source bytes/tree/mtime/mode invariance, Windows reparse refusal, workflow
+  conflicts/recovery, real API/worker process smoke and a 50,000-row **metadata correctness**
+  exercise. Symlink creation is skipped on this Windows account without that privilege;
+  the separate junction safety test passes. Final Phase 1 run: **31 passed, 1 skipped**;
+  Ruff checks and formatting pass. One Starlette/httpx test-client deprecation warning remains.
+- No real library/share, Zima deployment, GPU inference, D3 schema or actual copy IO was tested.
+  No real-hardware performance is claimed. Frontend source was not changed.
