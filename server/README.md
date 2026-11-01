@@ -124,6 +124,7 @@ All writes remain on Zima. Request payloads are capped before JSON/base64 parsin
 |---|---|
 | Register/list eval spaces | `POST/GET /api/indexes` |
 | Choose the index the laptop fills | `POST /api/pipeline/embedding/configure`, `GET /api/pipeline/embedding` |
+| Download a leased job's original | Authenticated `POST /api/agent/jobs/{id}/source` |
 | Queue prepared content | `POST /api/indexes/{id}/queue` with explicit `contentIds` |
 | Frozen labelled sample | `POST /api/comparison/samples` |
 | Versioned prompt vectors | `POST /api/indexes/{id}/prompts` |

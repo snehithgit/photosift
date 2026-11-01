@@ -1,9 +1,8 @@
 """One leased original to one D3 Nano assessment, through the model gateway on this laptop."""
 
 import base64
-from pathlib import Path
 
-from agent.embed import AGENT_INPUT, Unavailable, model_input
+from agent.embed import AGENT_INPUT, claimed_image
 
 QUESTION_VERSION = "photosift-d3-questions-v1"
 STATE = "Sort a private photo library. Judge only what is visible in the image, not its file name. Do not identify anyone."
@@ -50,15 +49,8 @@ def contract(d3):
     }
 
 
-def assess_payload(claim, root_mappings, gateway, target):
-    if claim["rootId"] not in root_mappings:
-        raise ValueError("No local read-only mapping for the claimed root ID")
+def assess_payload(client, claim, root_mappings, gateway, target):
     if claim["fingerprint"] != target["fingerprint"]:
         raise ValueError("Claim fingerprint does not match this executor")
-    root = Path(root_mappings[claim["rootId"]])
-    if not root.is_absolute():
-        raise ValueError("Root mapping must be absolute")
-    if not root.is_dir():
-        raise Unavailable("Library folder is not reachable")
-    image = base64.b64encode(model_input(root, claim)).decode("ascii")
-    return gateway.assess(image, STATE, QUESTIONS)
+    image = claimed_image(client, claim, root_mappings)
+    return gateway.assess(base64.b64encode(image).decode("ascii"), STATE, QUESTIONS)

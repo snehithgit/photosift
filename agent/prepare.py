@@ -6,7 +6,7 @@ import platform
 import re
 import stat
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import cv2
 import numpy as np
@@ -81,8 +81,34 @@ def read_verified(root, claim, max_bytes):
     return path, data
 
 
-def prepare(root, claim, config: PreparationConfig, model_path=None):
-    path, data = read_verified(root, claim, config.maxSourceBytes)
+def download_verified(client, claim, max_bytes):
+    """Fetch the leased original from the server, for a laptop with no path to the library."""
+    if claim["size"] > max_bytes:
+        raise ValueError("Source exceeds configured preparation memory bound")
+    data = bytearray()
+    with client.stream(
+        "POST",
+        "/api/agent/jobs/" + claim["jobId"] + "/source",
+        json={key: claim[key] for key in ("owner", "token", "attempt")},
+    ) as response:
+        response.raise_for_status()
+        for chunk in response.iter_bytes():
+            data.extend(chunk)
+            if len(data) > claim["size"]:
+                raise ValueError("Source hash/version mismatch; rescan required")
+    if (
+        len(data) != claim["size"]
+        or hashlib.sha256(data).hexdigest() != claim["sha256"]
+    ):
+        raise ValueError("Source hash/version mismatch; rescan required")
+    return bytes(data)
+
+
+def prepare(root, claim, config: PreparationConfig, model_path=None, data=None):
+    if data is None:
+        path, data = read_verified(root, claim, config.maxSourceBytes)
+    else:
+        path = PurePosixPath(claim["relativePath"])
     with Image.open(io.BytesIO(data)) as original:
         if original.width * original.height > config.maxPixels:
             raise ValueError("Image exceeds configured decode pixel bound")

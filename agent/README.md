@@ -13,15 +13,16 @@ py -3.12 -m venv .venv
 
 The last command prints the exact installed Pillow/OpenCV/NumPy/Python fingerprint and
 processing bounds. Use its output as `preparation` in a local config. Set `serverUrl` to
-your actual private Zima URL, `owner` to a stable agent name, and `rootMappings` to the
-actual server root IDs and **read-only** paths accessible from the laptop:
+your actual private Zima URL and `owner` to a stable agent name. For any library not listed in
+`rootMappings`, the agent downloads each leased original from the server and checks its hash, so
+no file share is needed. Add a mapping only to read a library from a local **read-only** path:
 
 ```json
 {
   "serverUrl": "http://YOUR-ZIMA-HOST:8000",
   "owner": "gpu-laptop",
   "tokenEnv": "PHOTOSIFT_AGENT_TOKEN",
-  "rootMappings": { "YOUR-REGISTERED-ROOT-ID": "YOUR-ABSOLUTE-READ-ONLY-PATH" },
+  "rootMappings": {},
   "preparation": {}
 }
 ```

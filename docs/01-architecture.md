@@ -13,7 +13,7 @@ Status: fresh-project design. Canonical flow: [02 Pipeline](02-pipeline.md). Thi
 
 ## Laptop agent executes compatible jobs
 
-The Windows agent pulls leased jobs from Zima and posts per-image results. It maps source root IDs to configured read-only SMB paths. It performs full decoding, EXIF extraction, quality/pHash/YuNet and embedding inference. It invokes local Ollama for D3 assessments. Zima does not need to push background inference HTTP requests into the laptop.
+The Windows agent pulls leased jobs from Zima and posts per-image results. It downloads each leased original from Zima and checks its hash, or reads it from a configured read-only path when one is mapped. It performs full decoding, EXIF extraction, quality/pHash/YuNet and embedding inference. It invokes local Ollama for D3 assessments. Zima does not need to push background inference HTTP requests into the laptop.
 
 There is no durable laptop database. Temporary buffers/cache are disposable. Accepted results live on Zima; expired claims can be retried. An active stage still needs a bounded batch/checkpoint and resource budget.
 

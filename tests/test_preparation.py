@@ -140,10 +140,8 @@ def test_payload_checks_unknown_faces_and_expired_leases(prepared_workspace):
     )
 
 
-def test_mapping_hash_mismatch_and_config_change(prepared_workspace):
+def test_hash_mismatch_and_config_change(prepared_workspace):
     client, db, source, root, config, claim = prepared_workspace
-    with pytest.raises(ValueError, match="mapping"):
-        execute(client, claim, {}, config)
     bad = {**claim, "sha256": "0" * 64}
     with pytest.raises(ValueError, match="hash/version"):
         prepare(source, bad, config)

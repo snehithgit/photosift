@@ -17,19 +17,19 @@ network share. The app has no login, so keep port 8000 on your home network and 
 
 ## Connect the laptop
 
-The laptop reads originals itself, so share the photo folder read-only over SMB. Then, in
-`agent.local.json` on the laptop:
+The laptop needs no file share. For each job it downloads that one original from Zima, using the
+same token, and checks its hash. In `agent.local.json` on the laptop:
 
-- set `serverUrl` to `http://<zima-address>:8000`
+- set `serverUrl` to `http://<zima-address>:<port>`
 - put the same secret in a local file and point `tokenFile` at it
-- set `rootMappings` to the library's ID, from `http://<zima-address>:8000/api/roots`, and the
-  share's path, such as `\\zima\Gallery`
+- leave `rootMappings` empty
 
+The token and photos travel over plain HTTP, so keep this on your trusted home network.
 `--init-local` is only for a server on the same machine, so don't use it here. The rest of the
 setup is in the [agent guide](../../agent/README.md).
 
 ## Not tested yet
 
 CI runs the tests on Linux and smoke-tests the image, but this has not run on a real ZimaOS machine.
-Custom Install's handling of this file, folder permissions, the laptop reading over SMB, and speed
-on Zima's disks and CPU are all unverified.
+Folder permissions, downloading photos from a real Zima, and speed on Zima's disks and CPU are
+unverified.

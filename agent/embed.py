@@ -10,7 +10,7 @@ import httpx
 import PIL
 from PIL import Image, ImageOps
 
-from agent.prepare import read_verified
+from agent.prepare import download_verified, read_verified
 
 MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_PIXELS = 80_000_000
@@ -74,6 +74,22 @@ def index_config(gateway_config):
 
 def model_input(root, claim):
     _, data = read_verified(root, claim, MAX_SOURCE_BYTES)
+    return input_image(data)
+
+
+def claimed_image(client, claim, root_mappings):
+    """The model's image for a job: from a mapped folder, otherwise from the server."""
+    if claim["rootId"] not in root_mappings:
+        return input_image(download_verified(client, claim, MAX_SOURCE_BYTES))
+    root = Path(root_mappings[claim["rootId"]])
+    if not root.is_absolute():
+        raise ValueError("Root mapping must be absolute")
+    if not root.is_dir():
+        raise Unavailable("Library folder is not reachable")
+    return model_input(root, claim)
+
+
+def input_image(data):
     with Image.open(io.BytesIO(data)) as original:
         if original.width * original.height > MAX_PIXELS:
             raise ValueError("Image exceeds configured decode pixel bound")
@@ -171,17 +187,10 @@ class Gateway:
         return vectors
 
 
-def embed_payload(claim, root_mappings, gateway, target):
-    if claim["rootId"] not in root_mappings:
-        raise ValueError("No local read-only mapping for the claimed root ID")
+def embed_payload(client, claim, root_mappings, gateway, target):
     if claim["fingerprint"] != target["fingerprint"]:
         raise ValueError("Claim fingerprint does not match this executor")
-    root = Path(root_mappings[claim["rootId"]])
-    if not root.is_absolute():
-        raise ValueError("Root mapping must be absolute")
-    if not root.is_dir():
-        raise Unavailable("Library folder is not reachable")
-    image = model_input(root, claim)
+    image = claimed_image(client, claim, root_mappings)
     vector = gateway.encode(image, target["gatewayFingerprint"])
     return {"indexId": target["indexId"], "vector": vector}
 

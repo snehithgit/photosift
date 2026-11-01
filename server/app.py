@@ -986,6 +986,36 @@ def create_app(db_path=None, *, agent_token=None):
         with db.write() as c:
             return leases.renew(c, identifier, request)
 
+    @app.post("/api/agent/jobs/{identifier}/source", dependencies=[Depends(agent)])
+    def job_source(identifier: str, request: LeaseInput):
+        # Only the original of a job this agent currently holds, read-only. The agent checks
+        # its hash, so a laptop with no path to the library needs no file share.
+        with db.read() as c:
+            job = leases.valid_lease(c, identifier, request)
+            source = c.execute(
+                "SELECT f.*,r.path AS root_path FROM file_instances f JOIN roots r ON r.id=f.root_id WHERE f.id=?",
+                (job["source_instance"],),
+            ).fetchone()
+        if (
+            not source
+            or source["state"] != "available"
+            or (source["size"], source["mtime_ns"])
+            != (job["source_size"], job["source_mtime_ns"])
+        ):
+            raise HTTPException(409, "Source superseded; rescan required")
+        try:
+            path = checked_path(source["root_path"], source["path"])
+            found = path.stat()
+        except (OSError, ValueError) as exc:
+            raise HTTPException(409, "Source is not readable on the server") from exc
+        if (found.st_size, found.st_mtime_ns) != (source["size"], source["mtime_ns"]):
+            raise HTTPException(409, "Source changed; rescan required")
+        return FileResponse(
+            path,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.post("/api/agent/jobs/{identifier}/release", dependencies=[Depends(agent)])
     def release(identifier: str, request: ReleaseInput):
         with db.write() as c:

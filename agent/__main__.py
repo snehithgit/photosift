@@ -19,7 +19,7 @@ from agent.embed import (
     index_config,
     prompt_pack,
 )
-from agent.prepare import configuration, prepare
+from agent.prepare import configuration, download_verified, prepare
 from server.db import fingerprint
 from server.preparation_contract import PreparationConfig
 
@@ -70,10 +70,11 @@ def leased(client, claim, work):
 
 def execute(client, claim, root_mappings, config, model_path=None):
     def work():
-        if claim["rootId"] not in root_mappings:
-            raise ValueError("No local read-only mapping for the claimed root ID")
         if claim["fingerprint"] != fingerprint(config.model_dump()):
             raise ValueError("Claim fingerprint does not match this executor")
+        if claim["rootId"] not in root_mappings:
+            data = download_verified(client, claim, config.maxSourceBytes)
+            return prepare(None, claim, config, model_path, data).model_dump()
         root = Path(root_mappings[claim["rootId"]])
         if not root.is_absolute():
             raise ValueError("Root mapping must be absolute")
@@ -114,7 +115,7 @@ def execute_embedding(client, claim, root_mappings, gateway, target):
         client,
         claim,
         "Embedding",
-        lambda: embed_payload(claim, root_mappings, gateway, target),
+        lambda: embed_payload(client, claim, root_mappings, gateway, target),
     )
 
 
@@ -123,7 +124,7 @@ def execute_assessment(client, claim, root_mappings, gateway, target):
         client,
         claim,
         "Assessment",
-        lambda: assess_payload(claim, root_mappings, gateway, target),
+        lambda: assess_payload(client, claim, root_mappings, gateway, target),
     )
 
 
@@ -270,6 +271,7 @@ def main():
         init_local(args.config, args.init_local)
         return
     settings = json.loads(args.config.read_text(encoding="utf-8"))
+    settings.setdefault("rootMappings", {})
     config = PreparationConfig.model_validate(settings["preparation"])
     actual = configuration(
         args.yunet,
