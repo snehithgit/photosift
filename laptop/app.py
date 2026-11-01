@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from laptop.config import load_settings
+from laptop.d3 import D3Error, D3Runtime
 from laptop.engine import Encoder
 from server.http_limits import BoundedBody
 
@@ -35,12 +36,20 @@ class EmbeddingRequest(BaseModel):
         return self
 
 
-def create_app(settings=None, encoder=None):
+class DecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: str = Field(min_length=1, max_length=2000)
+    images: list[str] = Field(min_length=1, max_length=1)
+    questions: dict
+
+
+def create_app(settings=None, encoder=None, d3=None):
     settings = settings or load_settings(os.environ.get("PHOTOSIFT_LAPTOP_CONFIG"))
     token = Path(settings.tokenFile).read_text(encoding="utf-8").strip()
     if len(token) < 32:
         raise RuntimeError("A strong local model-service token is required")
     engine = encoder or Encoder(settings)
+    assessor = d3 or D3Runtime(settings)
     slot = threading.BoundedSemaphore(1)
 
     def background_load():
@@ -71,11 +80,7 @@ def create_app(settings=None, encoder=None):
         return {
             "service": "photosift-laptop",
             "embedding": engine.status(),
-            "d3": {
-                "model": settings.d3Model,
-                "state": "protocol_unconfigured",
-                "endpoint": "/v1/systemone",
-            },
+            "d3": assessor.status(),
             "maxConcurrentGpuRequests": 1,
         }
 
@@ -139,10 +144,14 @@ def create_app(settings=None, encoder=None):
             slot.release()
 
     @app.post("/v1/systemone", dependencies=[Depends(authorize)])
-    def d3_assessment():
-        raise HTTPException(
-            501,
-            "D3 weights/runtime are prepared, but the SystemOne payload schema is not provided. No substitute decision protocol is used.",
-        )
+    def d3_assessment(request: DecisionRequest):
+        if not slot.acquire(blocking=False):
+            raise HTTPException(429, "GPU busy; retry this request later")
+        try:
+            return assessor.assess(request.state, request.images, request.questions)
+        except D3Error as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        finally:
+            slot.release()
 
     return app

@@ -26,6 +26,8 @@ def list_sets(c, query):
         if kind == "all"
         else " WHERE kind=?"
         if kind == "exact"
+        else " WHERE kind='possible'"
+        if kind == "similar"
         else " WHERE kind='possible' AND duplicate_set "
         + ("LIKE" if kind == "burst" else "NOT LIKE")
         + " 'burst-%'"
@@ -55,6 +57,7 @@ def list_sets(c, query):
                     "id": row["id"],
                     "kind": "exact",
                     "contentIds": [row["anchor"]],
+                    "photos": [p],
                     "paths": p["paths"],
                     "extraCopies": len(paths) - 1,
                     "contentDecisionChanged": False,
@@ -80,6 +83,7 @@ def list_sets(c, query):
                     if row["duplicate_set"].startswith("burst-")
                     else "possible",
                     "contentIds": ids,
+                    "photos": [detail(c, identifier) for identifier in ids],
                     "preselected": False,
                 }
             )

@@ -1,6 +1,6 @@
 import { useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { AlertTriangle, Check, Clock3, Copy, Eye, FileText, Shield, Sparkles, X } from 'lucide-react';
-import { formatBytes, groupLabel, type Band, type Decision, type Photo } from './domain';
+import { formatBytes, groupLabel, mediaUrl, shortDate, type Band, type Decision, type Photo } from './domain';
 
 const decisionLabel: Record<Decision, string> = { undecided: 'Undecided', keep: 'Keep', clutter: 'Set aside as clutter', later: 'Review later' };
 const sourceLabel: Record<string, string> = { rule: 'Rule', siglip2: 'SigLIP 2', yunet: 'YuNet', d3nano: 'D3 Nano' };
@@ -29,14 +29,14 @@ export function PhotoTile({ photo, excluded = false, selected = false, gridMode 
   return <article className={`photo-tile ${excluded ? 'is-excluded' : ''} ${selected ? 'is-selected' : ''} ${photo.protected ? 'is-protected' : ''}`}>
     <div className="tile-image-wrap"><button type="button" className="tile-image-button" onClick={(event) => gridMode ? onRange?.(event) : onToggle?.(event)} onDoubleClick={onOpen}
       onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); onOpen?.(); } else if (event.key === ' ') { event.preventDefault(); gridMode ? onRange?.(event) : onToggle?.(); } }}
-      aria-label={`${photo.groupId === 'documents' && photo.documentType === 'IDs' ? 'Sensitive ID document' : groupLabel(photo.groupId).replace('and', '')}, ${photo.captureDate ?? 'date unknown'}, ${photo.protected ? 'protected, ' : ''}${photo.decision === 'undecided' ? 'undecided' : decisionLabel[photo.decision]}${excluded ? ', excluded' : ''}`} aria-pressed={gridMode ? selected : excluded}>
-      <img src={photo.thumbUrl} loading="lazy" alt="" className={sensitive ? 'sensitive-blur' : ''}/>{sensitive && <span className="sensitive-overlay">Sensitive</span>}
+      aria-label={`${photo.groupId === 'documents' && photo.documentType === 'IDs' ? 'Sensitive ID document' : groupLabel(photo.groupId).replace('and', '')}, ${photo.captureDate ? shortDate(photo.captureDate) : 'date unknown'}, ${photo.protected ? 'protected, ' : ''}${photo.decision === 'undecided' ? 'undecided' : decisionLabel[photo.decision]}${excluded ? ', excluded' : ''}`} aria-pressed={gridMode ? selected : excluded}>
+      <img src={mediaUrl(photo.thumbUrl, photo, revealed)} loading="lazy" alt="" className={sensitive ? 'sensitive-blur' : ''}/>{sensitive && <span className="sensitive-overlay">Sensitive</span>}
       {visibleBadges.length > 0 && <span className="tile-badges">{visibleBadges.map((badge, i) => <span key={`${badge.text}-${i}`} className={`tile-badge tone-${badge.tone}`} title={badge.text} aria-label={badge.text}>{badge.icon}</span>)}</span>}
       {excluded && <span className="excluded-overlay"><X size={13}/> Excluded</span>}{gridMode && <span className={`selection-mark ${selected ? 'checked' : ''}`}>{selected ? <Check size={12}/> : null}</span>}
       {photo.sensitive === 'yes' && !revealed && <span className="tile-reveal" onClick={(event) => { event.stopPropagation(); setRevealed(true); }}><Eye size={12}/> Reveal</span>}
     </button></div>
     <div className="tile-caption"><span title={photo.filename}>{photo.filename}</span><button type="button" className="tile-info" onClick={onOpen} aria-label={`Open ${photo.filename} details`}>i</button></div>
-    <div className="tile-meta"><span>{photo.captureDate ?? 'Date unknown'}</span><span>{formatBytes(photo.bytes)}</span></div>
+    <div className="tile-meta"><span>{photo.captureDate ? shortDate(photo.captureDate) : 'Date unknown'}</span><span>{formatBytes(photo.bytes)}</span></div>
   </article>;
 }
 export function ActionBar({ sentence, eligibleCount, protectedCount, excludedCount, includeProtected, onIncludeProtected, onAction, disabled, personal }: {

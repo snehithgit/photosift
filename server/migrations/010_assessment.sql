@@ -1,0 +1,1 @@
+ALTER TABLE photos ADD COLUMN people TEXT NOT NULL DEFAULT 'unknown';

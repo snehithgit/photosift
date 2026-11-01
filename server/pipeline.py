@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from PIL import Image
 from pydantic import ValidationError
 
-from server import leases
+from server import assessments, embeddings, leases
 from server.db import bump, fingerprint, now, packed, uid
 from server.paths import checked_path
 from server.preparation_contract import PreparationConfig, PreparationResult
@@ -198,7 +198,7 @@ def submit_preparation(db, identifier, request):
                 if result.faceStatus == "done" and result.faces
                 else "No faces detected; not evidence of clutter"
                 if result.faceStatus == "done"
-                else "Face check " + result.faceStatus,
+                else "Face check " + result.faceStatus.replace("_", " "),
                 "strength": "strong"
                 if result.faces
                 else "weak"
@@ -246,5 +246,7 @@ def submit_preparation(db, identifier, request):
             "UPDATE stage_jobs SET state='done',expires=NULL,error=NULL WHERE id=?",
             (identifier,),
         )
+        embeddings.queue_active(c, request.sha256)
+        assessments.queue_active(c, request.sha256)
         bump(c)
         return ack

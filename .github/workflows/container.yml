@@ -1,0 +1,98 @@
+name: Test and publish image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend
+        run: |
+          pip install -r requirements.lock
+          pip install --no-deps -e .
+      - name: Check backend
+        run: |
+          ruff check server worker agent laptop tests
+          ruff format --check server worker agent laptop tests
+          pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Check frontend
+        working-directory: web
+        run: |
+          npx -y pnpm@11.25.0 install --frozen-lockfile
+          npx -y pnpm@11.25.0 run typecheck
+          npx -y pnpm@11.25.0 run test
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: photosift:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test the API, frontend and worker
+        run: |
+          docker volume create photosift-data
+          docker run -d --name photosift -p 8000:8000 -v photosift-data:/data photosift:test
+          for attempt in $(seq 1 30); do
+            curl -fs http://127.0.0.1:8000/api/status && break
+            sleep 2
+          done
+          curl -fs http://127.0.0.1:8000/api/status
+          curl -fs http://127.0.0.1:8000/ | grep -q '<div id="root"'
+          docker run --rm -v photosift-data:/data photosift:test python -m worker --once
+      - name: Show server log on failure
+        if: failure()
+        run: docker logs photosift || true
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha
+      - name: Publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

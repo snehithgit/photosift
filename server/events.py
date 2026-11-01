@@ -1,7 +1,7 @@
 from fastapi import HTTPException
 
 from server.db import action, audit, bump, now, packed, uid
-from server.queries import BASE, where
+from server.queries import BASE, detail, where
 
 
 def get_event(c, identifier):
@@ -37,6 +37,8 @@ def list_events(c, query):
             item[key] = item[key] or ""
         if item["parent_trip_id"]:
             item["tripId"] = item["parent_trip_id"]
+        if item["coverId"]:
+            item["cover"] = detail(c, item["coverId"])
         result.append(item)
     return result
 

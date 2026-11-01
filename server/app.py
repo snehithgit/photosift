@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import secrets
@@ -11,8 +12,17 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from server import (
+    assessments,
+    embeddings,
+    events,
+    exports,
+    leases,
+    pipeline,
+    review,
+    suggestions,
+)
 from server import duplicates as duplicate_queries
-from server import embeddings, events, exports, leases, pipeline, review, suggestions
 from server.contracts import (
     AppearanceSettings,
     ApprovalInput,
@@ -30,6 +40,7 @@ from server.contracts import (
     PhotoPatch,
     PhotoQuery,
     ProtectionSettings,
+    ReleaseInput,
     ResultInput,
     RootInput,
     ScanInput,
@@ -47,6 +58,8 @@ from server.queries import (
     group_stats,
     list_photos,
     photo,
+    query_fingerprint,
+    rows_by_id,
     validate_scope,
     where,
 )
@@ -61,6 +74,18 @@ def create_app(db_path=None, *, agent_token=None):
     db = Database(db_path or os.environ.get("PHOTOSIFT_DB", ".data/photosift.sqlite3"))
     app.state.db = db
     configured_token = agent_token or os.environ.get("PHOTOSIFT_AGENT_TOKEN")
+    token_file = db.path.parent / "agent-api.token"
+    # Whole-library counts take seconds at 50k photos and the overview polls them. Every change
+    # bumps the durable revision (the worker's too), so an entry can only be reused while exact.
+    summaries = {}
+
+    def per_revision(c, name, query, compute):
+        key = (name, revision(c), query.model_dump_json())
+        if key not in summaries:
+            if len(summaries) >= 32:
+                summaries.clear()
+            summaries[key] = compute()
+        return summaries[key]
 
     @app.exception_handler(sqlite3.IntegrityError)
     async def integrity_error(request, exception):
@@ -70,10 +95,13 @@ def create_app(db_path=None, *, agent_token=None):
         )
 
     def agent(authorization: Annotated[str | None, Header()] = None):
-        if not configured_token:
+        token = configured_token
+        if not token and token_file.is_file():
+            token = token_file.read_text(encoding="utf-8").strip()
+        if not token:
             raise HTTPException(503, "Agent access is not configured")
         if not authorization or not secrets.compare_digest(
-            authorization, "Bearer " + configured_token
+            authorization, "Bearer " + token
         ):
             raise HTTPException(401, "Worker authentication required")
 
@@ -125,9 +153,9 @@ def create_app(db_path=None, *, agent_token=None):
             path = Path(request.path).expanduser()
             if not path.is_absolute():
                 raise ValueError("Library path must be absolute")
-            path = checked_path(path).resolve()
             if not path.is_dir():
-                raise ValueError("Library root is unavailable")
+                raise ValueError("That folder doesn’t exist or can’t be opened")
+            path = checked_path(path).resolve()
             if overlap(path, db.path.parent):
                 raise ValueError("Library and app data must be separate")
             with db.write() as c:
@@ -226,39 +254,50 @@ def create_app(db_path=None, *, agent_token=None):
     def library_stats(query: Annotated[PhotoQuery, Query()]):
         with db.read() as c:
             validate_scope(c, query)
-            clauses, params = ["1=1"], []
-            if query.root:
-                clauses.append("root_id=?")
-                params.append(query.root)
-            if query.folder:
-                clauses.append("substr(path,1,?)=?")
-                params.extend([len(query.folder) + 1, query.folder + "/"])
-            condition = " AND ".join(clauses)
-            rows = c.execute(
-                "SELECT state,COUNT(*) AS files,COALESCE(SUM(size),0) AS bytes FROM file_instances WHERE "
-                + condition
-                + " GROUP BY state",
-                params,
-            ).fetchall()
-            formats = c.execute(
-                BASE
-                + "SELECT format,COUNT(*) AS count FROM base b WHERE "
-                + where(
-                    query.model_copy(update={"decisions": "all", "reviewed": True})
-                )[0]
-                + " GROUP BY format",
-                where(query.model_copy(update={"decisions": "all", "reviewed": True}))[
-                    1
-                ],
-            ).fetchall()
-            return {
-                "files": sum(r["files"] for r in rows),
-                "bytes": sum(r["bytes"] for r in rows),
-                "states": [dict(r) for r in rows],
-                "formats": [dict(r) for r in formats],
-                "groups": group_stats(c, query),
-                "revision": revision(c),
-            }
+            return per_revision(
+                c, "library", query, lambda: compute_library_stats(c, query)
+            )
+
+    def compute_library_stats(c, query):
+        clauses, params = ["1=1"], []
+        if query.root:
+            clauses.append("root_id=?")
+            params.append(query.root)
+        if query.folder:
+            clauses.append("substr(path,1,?)=?")
+            params.extend([len(query.folder) + 1, query.folder + "/"])
+        condition = " AND ".join(clauses)
+        rows = c.execute(
+            "SELECT state,COUNT(*) AS files,COALESCE(SUM(size),0) AS bytes FROM file_instances WHERE "
+            + condition
+            + " GROUP BY state",
+            params,
+        ).fetchall()
+        scope, scope_params = where(
+            query.model_copy(update={"decisions": "all", "reviewed": True})
+        )
+        summary = c.execute(
+            BASE
+            + "SELECT MIN(capture_date) AS first,MAX(capture_date) AS last FROM base b WHERE "
+            + scope,
+            scope_params,
+        ).fetchone()
+        formats = c.execute(
+            BASE
+            + "SELECT format,COUNT(*) AS count FROM base b WHERE "
+            + scope
+            + " GROUP BY format",
+            scope_params,
+        ).fetchall()
+        return {
+            "files": sum(r["files"] for r in rows),
+            "bytes": sum(r["bytes"] for r in rows),
+            "states": [dict(r) for r in rows],
+            "formats": [dict(r) for r in formats],
+            "dateRange": {"first": summary["first"], "last": summary["last"]},
+            "groups": per_revision(c, "groups", query, lambda: group_stats(c, query)),
+            "revision": revision(c),
+        }
 
     @app.get("/api/library/files")
     def inventory_files(query: Annotated[InventoryQuery, Query()]):
@@ -271,7 +310,12 @@ def create_app(db_path=None, *, agent_token=None):
             if query.folder:
                 clauses.append("substr(path,1,?)=?")
                 params.extend([len(query.folder) + 1, query.folder + "/"])
-            if query.state:
+            if query.state == "unreadable":
+                # A file can pass the scan and still fail to decode during preparation.
+                clauses.append(
+                    "(state='unreadable' OR EXISTS(SELECT 1 FROM stage_jobs j WHERE j.content_id=file_instances.content_id AND j.state='failed'))"
+                )
+            elif query.state:
                 clauses.append("state=?")
                 params.append(query.state)
             condition = " AND ".join(clauses)
@@ -279,7 +323,7 @@ def create_app(db_path=None, *, agent_token=None):
                 "SELECT COUNT(*) FROM file_instances WHERE " + condition, params
             ).fetchone()[0]
             rows = c.execute(
-                "SELECT * FROM file_instances WHERE "
+                "SELECT *,(SELECT j.error FROM stage_jobs j WHERE j.content_id=file_instances.content_id AND j.state='failed' LIMIT 1) AS stageError FROM file_instances WHERE "
                 + condition
                 + " ORDER BY root_id,path LIMIT ? OFFSET ?",
                 [*params, query.limit, (query.page - 1) * query.limit],
@@ -294,7 +338,8 @@ def create_app(db_path=None, *, agent_token=None):
     def groups(query: Annotated[PhotoQuery, Query()]):
         with db.read() as c:
             validate_scope(c, query)
-            return {"items": group_stats(c, query), "revision": revision(c)}
+            items = per_revision(c, "groups", query, lambda: group_stats(c, query))
+            return {"items": items, "revision": revision(c)}
 
     @app.get("/api/photos")
     def photos(query: Annotated[PhotoQuery, Query()]):
@@ -309,34 +354,34 @@ def create_app(db_path=None, *, agent_token=None):
         with db.read() as c:
             validate_scope(c, query)
             condition, params = where(query)
-            sample = c.execute(
-                BASE
-                + ", ranked AS (SELECT b.*,ROW_NUMBER() OVER (PARTITION BY band,folder ORDER BY random()) sample_rank FROM base b WHERE "
+
+            def pick(sql):
+                return rows_by_id(c, [r[0] for r in c.execute(BASE + sql, params)])
+
+            sample = pick(
+                ", ranked AS (SELECT b.content_id,ROW_NUMBER() OVER (PARTITION BY band,folder ORDER BY random()) sample_rank FROM base b WHERE "
                 + condition
-                + " AND is_protected=0) SELECT * FROM ranked ORDER BY sample_rank,random() LIMIT 24",
-                params,
-            ).fetchall()
-            borderline = c.execute(
-                BASE
-                + "SELECT b.* FROM base b WHERE "
+                + " AND is_protected=0) SELECT content_id FROM ranked ORDER BY sample_rank,random() LIMIT 24"
+            )
+            borderline = pick(
+                "SELECT b.content_id FROM base b WHERE "
                 + condition
-                + " AND is_protected=0 AND band='low' ORDER BY CASE WHEN instr(evidence,'small_margin')>0 THEN 0 ELSE 1 END,content_id LIMIT 24",
-                params,
-            ).fetchall()
-            protected = c.execute(
-                BASE
-                + "SELECT b.* FROM base b WHERE "
+                + " AND is_protected=0 AND band='low' ORDER BY CASE WHEN instr(evidence,'small_margin')>0 THEN 0 ELSE 1 END,content_id LIMIT 24"
+            )
+            protected = pick(
+                "SELECT b.content_id FROM base b WHERE "
                 + condition
-                + " AND is_protected=1 ORDER BY content_id LIMIT 24",
-                params,
-            ).fetchall()
+                + " AND is_protected=1 ORDER BY content_id LIMIT 24"
+            )
             counts = c.execute(
                 BASE
-                + "SELECT COUNT(*) total,COALESCE(SUM(is_protected),0) protected FROM base b WHERE "
+                + "SELECT COUNT(*) total,COALESCE(SUM(is_protected),0) protected,COALESCE(SUM(is_protected=0 AND band='low'),0) borderline FROM base b WHERE "
                 + condition,
                 params,
             ).fetchone()
             return {
+                "borderlineCount": counts["borderline"],
+                "queryFingerprint": query_fingerprint(query, revision(c)),
                 "sample": [photo(c, r) for r in sample],
                 "borderline": [photo(c, r) for r in borderline],
                 "protected": [photo(c, r) for r in protected],
@@ -508,6 +553,10 @@ def create_app(db_path=None, *, agent_token=None):
                 "SELECT value FROM settings WHERE section='analyze'"
             ).fetchone()
             control = json.loads(control[0]) if control else {"state": "running"}
+            indexes = [
+                {"id": row["id"], "role": row["role"], "status": row["status"]}
+                for row in c.execute("SELECT id,role,status FROM embedding_indexes")
+            ]
             primary = c.execute(
                 "SELECT id FROM embedding_indexes WHERE role='primary' AND status='ready'"
             ).fetchone()
@@ -516,6 +565,15 @@ def create_app(db_path=None, *, agent_token=None):
                     "SELECT 1 FROM stage_specs WHERE stage='prepare' AND active=1"
                 ).fetchone()
             )
+            embed_configured = embeddings.active_index(c) is not None
+            assess_configured = assessments.active_spec(c) is not None
+            grouped = c.execute(
+                BASE
+                + "SELECT COUNT(*) AS total,COALESCE(SUM(b.group_id!='unclassified'),0) AS done FROM base b WHERE "
+                + condition
+                + " AND b.decision='undecided'",
+                params,
+            ).fetchone()
             inventory_counts = {
                 r["state"]: r["n"]
                 for r in c.execute(
@@ -531,8 +589,10 @@ def create_app(db_path=None, *, agent_token=None):
             }
         result = []
         for stage in ("inventory", "prepare", "embed", "assess", "group"):
+            # Skipped jobs were superseded or cancelled; they are not work still owed.
             counts = {r["state"]: r["n"] for r in stage_rows if r["stage"] == stage}
-            total, done = sum(counts.values()), counts.get("done", 0)
+            total = sum(n for state, n in counts.items() if state != "skipped")
+            done = counts.get("done", 0)
             state = (
                 "done"
                 if total and done == total
@@ -546,8 +606,20 @@ def create_app(db_path=None, *, agent_token=None):
                 state = "failed"
             elif counts.get("running"):
                 state = "running"
-            elif stage == "prepare" and not prep_configured or stage == "assess":
+            elif (
+                stage == "prepare"
+                and not prep_configured
+                or stage == "assess"
+                and not assess_configured
+                or stage == "embed"
+                and not embed_configured
+                and not total
+            ):
                 state = "model_unavailable"
+            if stage == "group" and primary:
+                # Grouping has no jobs: it runs when the owner asks, over photos still undecided.
+                total, done = grouped["total"], grouped["done"]
+                state = "done" if done == total else "paused"
             if stage == "inventory":
                 counts = inventory_counts
                 total = sum(counts.values())
@@ -583,10 +655,12 @@ def create_app(db_path=None, *, agent_token=None):
             "scans": scans,
             "control": control,
             "primaryIndex": primary[0] if primary else None,
+            "indexes": indexes,
+            "preparationConfigured": prep_configured,
             "d3": {
                 "endpoint": "/v1/systemone",
-                "schema": "unknown",
-                "state": "unconfigured",
+                "schema": "ollama-systemone",
+                "state": "configured" if assess_configured else "unconfigured",
             },
         }
 
@@ -766,9 +840,10 @@ def create_app(db_path=None, *, agent_token=None):
         identifier: str,
         page: int = Query(1, ge=1),
         limit: int = Query(180, ge=1, le=500),
+        q: str = Query("", max_length=1000),
     ):
         with db.read() as c:
-            return exports.plan(c, identifier, page, limit)
+            return exports.plan(c, identifier, page, limit, q)
 
     @app.post("/api/export/plans/{identifier}/approve", status_code=202)
     def approve_plan(identifier: str, request: ApprovalInput):
@@ -868,7 +943,7 @@ def create_app(db_path=None, *, agent_token=None):
             }
 
     @app.get("/api/media/{identifier}")
-    def media(identifier: str, reveal: bool = False):
+    def media(identifier: str, reveal: bool = False, placeholder: bool = False):
         with db.read() as c:
             row = c.execute(
                 "SELECT * FROM cached_media WHERE id=?", (identifier,)
@@ -876,14 +951,30 @@ def create_app(db_path=None, *, agent_token=None):
             if not row:
                 raise HTTPException(404, "Media has not been prepared")
             p = detail(c, row["content_id"])
-            if p["blurRequired"] and not reveal:
+            if p["blurRequired"] and not reveal and not placeholder:
                 raise HTTPException(
                     403, "Explicit reveal required for restricted media"
                 )
             path = Path(row["path"]).resolve()
-        if not path.is_relative_to(db.path.parent / "cache"):
+        if not path.is_relative_to(db.path.parent.resolve() / "cache"):
             raise HTTPException(403, "Invalid cached media boundary")
-        return FileResponse(path, headers={"Cache-Control": "no-store"})
+        if placeholder and not reveal:
+            # A blurred tile needs colours, not detail: 12 pixels cannot expose a restricted photo.
+            from PIL import Image
+
+            with Image.open(path) as image:
+                image.thumbnail((12, 12))
+                output = io.BytesIO()
+                image.convert("RGB").save(output, "WEBP", quality=40)
+            return Response(
+                output.getvalue(),
+                media_type="image/webp",
+                headers={"Cache-Control": "no-store"},
+            )
+        # Cache files carry no extension to infer a type from; the agent always writes WebP.
+        return FileResponse(
+            path, media_type="image/webp", headers={"Cache-Control": "no-store"}
+        )
 
     @app.post("/api/agent/claim", dependencies=[Depends(agent)])
     def claim(request: ClaimInput):
@@ -895,12 +986,20 @@ def create_app(db_path=None, *, agent_token=None):
         with db.write() as c:
             return leases.renew(c, identifier, request)
 
+    @app.post("/api/agent/jobs/{identifier}/release", dependencies=[Depends(agent)])
+    def release(identifier: str, request: ReleaseInput):
+        with db.write() as c:
+            return leases.release(c, identifier, request)
+
     @app.post("/api/agent/jobs/{identifier}/result", dependencies=[Depends(agent)])
     def result(identifier: str, request: ResultInput):
         with db.read() as c:
             job = c.execute(
                 "SELECT stage FROM stage_jobs WHERE id=?", (identifier,)
             ).fetchone()
+        if job and job["stage"] == "assess":
+            with db.write() as c:
+                return assessments.accept(c, identifier, request)
         if job and job["stage"] == "embed":
             from pydantic import ValidationError
 
@@ -931,6 +1030,11 @@ def create_app(db_path=None, *, agent_token=None):
         with db.write() as c:
             return embeddings.queue(c, identifier, request)
 
+    @app.get("/api/comparison")
+    def comparison():
+        with db.read() as c:
+            return embeddings.overview(c)
+
     @app.post("/api/comparison/samples")
     def comparison_sample(request: embeddings.ComparisonSample):
         with db.write() as c:
@@ -955,6 +1059,29 @@ def create_app(db_path=None, *, agent_token=None):
     def configure_preparation(request: PreparationConfig):
         with db.write() as c:
             return pipeline.configure_preparation(c, request)
+
+    @app.get("/api/pipeline/assessment")
+    def active_assessment():
+        with db.read() as c:
+            return assessments.active_spec(c)
+
+    @app.post("/api/pipeline/assessment/configure")
+    def configure_assessment(request: assessments.AssessmentConfig):
+        with db.write() as c:
+            return assessments.configure(c, request)
+
+    @app.get("/api/pipeline/embedding")
+    def active_embedding():
+        with db.read() as c:
+            index = embeddings.active_index(c)
+        if not index:
+            return None
+        return {"indexId": index["id"], "fingerprint": index["fingerprint"]}
+
+    @app.post("/api/pipeline/embedding/configure")
+    def configure_embedding(request: embeddings.IndexConfig):
+        with db.write() as c:
+            return embeddings.configure(c, request)
 
     @app.post("/api/agent/jobs/{identifier}/fail", dependencies=[Depends(agent)])
     def fail_stage(identifier: str, request: FailureInput):

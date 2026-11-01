@@ -186,7 +186,7 @@ def create_plan(db, request):
         raise HTTPException(422, str(exc)) from exc
 
 
-def plan(c, identifier, page=1, limit=180):
+def plan(c, identifier, page=1, limit=180, q=""):
     row = c.execute("SELECT * FROM export_plans WHERE id=?", (identifier,)).fetchone()
     if not row:
         raise HTTPException(404, "Unknown export plan")
@@ -194,11 +194,18 @@ def plan(c, identifier, page=1, limit=180):
         "SELECT COUNT(*) FROM export_entries e JOIN photos p ON p.content_id=e.content_id WHERE e.plan_id=? AND p.review_version!=json_extract(e.snapshot,'$.reviewVersion')",
         (identifier,),
     ).fetchone()[0]
+    matching = "plan_id=? AND (?='' OR instr(lower(source),lower(?))>0 OR instr(lower(destination),lower(?))>0)"
+    scope = (identifier, q, q, q)
+    rows_total = c.execute(
+        "SELECT COUNT(*) FROM export_entries WHERE " + matching, scope
+    ).fetchone()[0]
     rows = [
         dict(r)
         for r in c.execute(
-            "SELECT content_id AS contentId,source,destination,sha256,size,snapshot FROM export_entries WHERE plan_id=? ORDER BY destination LIMIT ? OFFSET ?",
-            (identifier, limit, (page - 1) * limit),
+            "SELECT content_id AS contentId,source,destination,sha256,size,snapshot FROM export_entries WHERE "
+            + matching
+            + " ORDER BY destination LIMIT ? OFFSET ?",
+            (*scope, limit, (page - 1) * limit),
         )
     ]
     for item in rows:
@@ -213,6 +220,7 @@ def plan(c, identifier, page=1, limit=180):
         "state": row["state"],
         "staleDecisions": stale,
         "rows": rows,
+        "rowsTotal": rows_total,
         "page": page,
         "limit": limit,
         "executorAvailable": True,

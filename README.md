@@ -1,10 +1,12 @@
 # PhotoSift
 
-> Status: finished frontend mock plus tested inventory/review, laptop preparation,
-> embedding-comparison infrastructure and verified-copy backend execution.
-> Run the API and Zima worker with the [backend guide](server/README.md).
-> The frontend still uses mock data and is deliberately unchanged. Model selection and the
-> D3 protocol remain pending; no GPU model performance is claimed.
+> Status: the frontend is connected to the real backend, with mock data removed and its
+> look unchanged. Inventory, review, laptop preparation, events and verified-copy export
+> work end to end. Run it with the [backend guide](server/README.md).
+> The laptop now fills an embedding index from leased jobs, but filling it does not group
+> anything. Real photos stay in Unclassified until prompts are encoded, labels are compared
+> and an index is explicitly promoted. D3 Nano is connected through Ollama's decision API and
+> tested on generated images, not real private records. No model accuracy is claimed.
 
 PhotoSift is a local AI photo-decluttering app for huge personal libraries. It groups
 personal photos, documents, food, screenshots and memes so you can make bulk
@@ -44,4 +46,4 @@ organised folders for Immich.
 > PhotoSift is a **fresh project**: it does not extend or reuse any existing repository.
 > The [canonical pipeline](docs/02-pipeline.md) now defines the working design: SQLite WAL on Zima, a laptop pull agent, one primary embedding index, protection before Clutter suggestions, and copy-only export.
 > Docs 07–08 are research/background notes, not measured product guarantees. Preparation and
-> verified copying are implemented; native embedding/D3 runtime integration still needs validation.
+> verified copying are implemented, and embedding jobs run on the real GPU service; labelled evaluation and D3 still need validation.

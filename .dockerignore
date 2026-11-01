@@ -1,0 +1,10 @@
+*
+!pyproject.toml
+!requirements.lock
+!server/
+!worker/
+!web/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+**/__pycache__/

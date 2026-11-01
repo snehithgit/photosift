@@ -119,11 +119,10 @@ Build in phases; each phase ends with tests and a runnable result. Do not start 
 
 **Phase 2 — Connect the frontend**
 
-Frontend integration is **deferred at the owner's request**. An attempted integration was
-fully reverted; `web/` is exactly the finished original mock. Do not redesign or reconnect it
-while continuing backend work. Current backend progress and remaining gates are in section 8.
-- Replace the Zustand mock data with TanStack Query calls to the API, keeping a `VITE_MOCK=1` mode that still runs
-  on the fake dataset. Keep every verified behaviour from section 3.
+Done on the owner's request: the frontend now reads and writes only the API, and the mock
+dataset is gone (no `VITE_MOCK` mode). `web/src/styles.css` is byte-identical to the finished
+design and JSX structure was kept; an earlier attempt that changed the layout was reverted.
+Current backend progress and remaining gates are in section 8.
 
 **Later phases** (in `docs/02-pipeline.md`): laptop pull agent and preparation (EXIF, thumbnails, pHash, YuNet),
 embedding comparison and primary index, D3 Nano adapter, protection gate and triage, events, verified export.
@@ -251,4 +250,64 @@ Ruff, dependency checks and PowerShell syntax checks pass. Actual repeated start
 and restart passed with the same fingerprint; existing shared Ollama was preserved.
 Live missing-token 401 and D3-unconfigured 501 checks passed. No library classification accuracy or
 sustained performance was measured. These results supersede the earlier statement that
-native image/text execution had not been tested; Zima job integration still is pending.
+native image/text execution had not been tested.
+
+## 10. Embedding jobs connected
+
+Leased image embedding jobs now run from Zima through the agent to the local gateway; see the
+[agent guide](agent/README.md). This supersedes the follow-up above for backend dispatch, and
+the launcher now also runs the agent once `agent.local.json` exists. Verified on the real GPU
+with 240 generated photos on a scratch database, including a model service killed mid-job. The
+owner's library has not been run. Labelled comparison, prompt encoding, promotion and Zima
+connectivity remain, so photos stay Unclassified. Full pytest: **91 passed, 1 skipped**.
+
+## 11. From a filled index to groups
+
+Prompt encoding (`--encode-prompts`), Teach labels saved as a frozen sample, the comparison report,
+explicit promotion and bounded scoring now work end to end; see the [agent guide](agent/README.md).
+Run on the real GPU and through the real screens, on a scratch database with **323 generated
+images, none a real photo and none showing a real person**. 200 were labelled through Teach from
+their filenames: 92 train, 108 held out, 111 moments, no moment on both sides.
+
+| Held-out result (108 images) | |
+|---|---|
+| Matched, at family level | 87% (94 of 108); macro F1 0.86 |
+| High band (margin at least 0.0114) | 85 of 87 matched |
+| Medium band | Empty: no margin on these labels reached 80% |
+| Low band | 9 of 21 matched |
+| Personal or documents ranked as a clutter type | 2 of 49, none in High |
+
+On the 118 scored images never labelled: High 77 of 82, Low 14 of 36, Other 9 of 23 and Screenshots
+11 of 20 matched. All 308 undecided images left Unclassified with evidence, 228 High and 80 Low.
+No decision among 15 set beforehand changed, and no source file changed. Every photo stayed
+`needs_review`: sensitivity is unknown without D3, so none became a clutter suggestion. These figures
+say nothing about real photos, whose people and clutter look different. The owner's library has not
+been run. Full pytest: **102 passed, 1 skipped**.
+
+Margins are measured against the best category of another family, and people, events and places
+count as one family because Teach has one Personal label. Scoring leaves reviewed photos out,
+because bumping their review version would block undoing them; they stay in their group until
+reset and scored again. Cut-offs are one pair per run; the per-group sliders under Settings,
+Thresholds are not used, and now say so.
+
+Known issue, measured on the scratch run: promotion bumps every photo's review version, so undoing
+a decision made before promotion is refused as a conflict. The decision stays as it was; only that
+undo is lost. To use this on the live server, restart it and rebuild `web/dist`: both still run the
+code from before this work.
+
+## 12. D3 Nano assessment connected
+
+Earlier notes calling the `/v1/systemone` schema unknown are superseded: Ollama documents it at
+<https://docs.ollama.com/api/systemone>, and it was confirmed against the installed model on Ollama
+0.40.13. The gateway forwards to the owned Ollama, `agent/assess.py` holds the questions, and
+`server/assessments.py` holds the cut-offs. `--configure-assessment` activates it. The fingerprint
+covers model digest, Ollama version, questions, state and image steps, and migration `010` adds
+`photos.people`, which lets D3 stand in for a face check that never ran.
+
+Measured on the real GPU on a scratch database: median 1.4 s per photo, with SigLIP2 and D3 together
+using 5.3 GB of 8 GB. Of 24 generated fake IDs, cards and records, 20 scored sensitive, 4 stayed
+Unknown and none was cleared; the lowest score was 0.14. None of 34 plain generated images was
+flagged. On a read-only pass over the owner's 15 real photos, 6 webcam shots came back as people and
+worth keeping, and the screenshots as not sensitive, with one held on importance and one on people.
+These images say little about real IDs. Full pytest: **119 passed, 1 skipped**.
+

@@ -37,14 +37,19 @@ can still consume VRAM. No CPU fallback, alternate model or remote inference is 
 Start/stop are repeatable and identify owned processes by PID, creation time and
 command hash. Failed starts roll back newly launched processes only.
 
-This launcher runs laptop model services. Zima continues to own the API, worker,
-SQLite and library state. It does not start or modify the frontend, configure a
-library or automatically activate a backend embedding index. The preparation pull
-agent remains separately configured as described in [agent guide](../agent/README.md).
+Status exits 0 when everything is running and ready, and 3 when something is not. Status
+and Stop keep working while Start waits for the model; Stop cancels that Start. Nothing
+restarts a service that dies, but a running agent waits and carries on once Start is run again.
 
-## URLs to configure on Zima
+This launcher runs the laptop model services, and the pull agent once `agent.local.json`
+exists (`.data/services/agent.log`). Zima continues to own the API, worker, SQLite and
+library state. It does not start or modify the frontend, configure a library or activate an
+embedding index; the [agent guide](../agent/README.md) has those explicit steps.
 
-The scripts print the detected laptop address and write `.data/services/endpoints.json`.
+## URLs for other machines
+
+Embedding jobs do not need these: the agent runs on this laptop and calls the gateway
+locally. They are for a client on another machine. The scripts print the detected laptop address and write `.data/services/endpoints.json`.
 On the tested Wi-Fi this is `192.168.68.65` (DHCP may change it):
 
 - `http://192.168.68.65:8787/v1/embeddings`
@@ -57,7 +62,8 @@ It is never printed by start/status and is excluded from Git with all `.data/` f
 Keep the service on your trusted home LAN; plain HTTP does not encrypt this token or images.
 If Windows Firewall blocks Zima, run `Enable-PhotoSiftLAN.ps1` explicitly in an
 Administrator PowerShell. It permits TCP 8787 only for the Private profile and local
-subnet. No firewall change is made automatically. Reserve the laptop IP in your router
+subnet, so it does not apply while the network is set to Public; the script warns about
+that. No firewall change is made automatically. Reserve the laptop IP in your router
 or set `advertiseHost` in `.data/services/laptop.json` to a stable hostname/IP.
 
 Embedding requests are JSON, either `{"input":["a family photo","a receipt"]}`
@@ -74,17 +80,18 @@ features share this same index contract. Files are checksummed again on each mod
 
 The local tag is `hf.co/ggml-org/vllm-d3-nano-GGUF:Q8_0`. Ollama is its runtime;
 SigLIP2 runs through Transformers, not Ollama. D3 weights were already installed on this
-laptop. The launcher prepares its dedicated Ollama daemon but does not load D3 alongside
-the embedding encoder on an 8 GB GPU.
+laptop. Both models stay loaded together: 5.3 GB of the 8 GB, measured with nothing else on
+the GPU. Other GPU programs can still run it out of memory.
 
-`/v1/systemone` is **not operational**: the project docs contain no request/response
-fixture. The gateway returns 501 and health says `protocol_unconfigured`. It does not
-translate it into `/api/chat` or invent decisions. The correct schema/adapter and GPU
-handoff must be implemented before Zima can use D3 decisions. The embeddings endpoint
-can be used independently now; backend job dispatch to this gateway is separate work.
+`POST /v1/systemone` forwards to the owned Ollama's documented
+[decision API](https://docs.ollama.com/api/systemone), with the model fixed by this service.
+The body is `{"state": "...", "images": ["<base64>"], "questions": {...}}`, one image per
+request. Each question has a `type` of `choice`, `noul` or `score`, `instructions`, and
+`criteria`. Answers come back per question name: `noul` is the probability of yes, and `choice`
+carries `choice`, `probabilities` and `confidence`. They are not a chat reply, and `/api/chat`
+is not used. `/health` reports `d3.state` with the exact model digest and Ollama version.
 
-Logs and configuration: `.data/services/{models,ollama}.log`, `laptop.json`,
+Logs and configuration: `.data/services/{models,ollama,agent}.log`, `laptop.json`,
 `processes.json`. No original photo paths are configured or written by this service.
-Actual library accuracy, sustained throughput, remote Zima connectivity and D3 inference
-remain unverified. Primary-index promotion still requires an explicit labelled report
+Actual library accuracy, sustained throughput and remote Zima connectivity remain unverified. Primary-index promotion still requires an explicit labelled report
 and complete backfill; selecting the loading default does not bypass that protection.

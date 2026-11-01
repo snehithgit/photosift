@@ -13,11 +13,13 @@ import urllib.request
 from pathlib import Path
 
 import psutil
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from laptop.config import PROJECT, SERVICE_DIRECTORY, load_settings, write_json
 
 STATE = SERVICE_DIRECTORY / "processes.json"
+AGENT_CONFIG = PROJECT / "agent.local.json"
+NOT_RUNNING = 3
 
 
 def identity(process):
@@ -43,20 +45,22 @@ def fetch(url):
 
 
 def port_free(port):
-    with socket.socket() as probe:
-        try:
-            probe.bind(("127.0.0.1", port))
-        except OSError as exc:
+    # A test bind on one address misses a listener on 0.0.0.0 or :: on Windows, so ask the OS.
+    for connection in psutil.net_connections(kind="tcp"):
+        if connection.status == psutil.CONN_LISTEN and connection.laddr.port == port:
             raise RuntimeError(
-                f"Port {port} is already in use; no external process will be stopped"
-            ) from exc
+                f"Port {port} is already in use by process {connection.pid}; no external process will be stopped"
+            )
 
 
 def stop_process(record):
     process = owned(record)
     if process is None:
         return
-    children = process.children(recursive=True)
+    try:
+        children = process.children(recursive=True)
+    except psutil.NoSuchProcess:
+        return
     # Recheck the owner before terminating the captured tree.
     if owned(record) is None:
         return
@@ -96,7 +100,9 @@ def wait_ready(url, predicate, record, timeout=300):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if owned(record) is None:
-            raise RuntimeError("Service exited; inspect .data/services/*.log")
+            raise RuntimeError(
+                "Service exited or Stop was run; inspect .data/services/*.log"
+            )
         try:
             value = fetch(url)
             if predicate(value):
@@ -120,59 +126,69 @@ def advertised(settings):
             return socket.gethostbyname(socket.gethostname())
 
 
+def agent_command():
+    folder = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    python = PROJECT / ".venv" / folder
+    if not AGENT_CONFIG.is_file() or not python.is_file():
+        return None
+    return [str(python), "-u", "-m", "agent", "--config", str(AGENT_CONFIG)]
+
+
+def read_records():
+    return json.loads(STATE.read_text()) if STATE.exists() else {}
+
+
+def locked():
+    # Held only while reading or changing records, never during a model load, so Status and
+    # Stop keep working while Start waits.
+    return FileLock(str(SERVICE_DIRECTORY / "manager.lock"), timeout=10)
+
+
 def report(settings, records):
-    for name, record in records.items():
-        print(
-            name
-            + ": "
-            + ("running (owned)" if owned(record) else "stopped / identity changed")
-        )
+    running = True
+    for name in ("ollama", "models", "agent"):
+        if name not in records:
+            if name == "agent" and agent_command() is None:
+                print("agent: not set up; see agent/README.md")
+                continue
+            print(name + ": stopped")
+            running = False
+        elif owned(records[name]):
+            print(name + ": running (owned)")
+        else:
+            print(name + ": stopped / identity changed")
+            running = False
+    try:
+        health = fetch(f"http://127.0.0.1:{settings.port}/health")
+        state = health["embedding"]["state"]
+        d3_state = health["d3"]["state"]
+    except (OSError, ValueError, KeyError):
+        print("Embedding endpoint unavailable")
+        return NOT_RUNNING
+    print("Embedding:", state)
+    print("D3 Nano:", d3_state)
     base = f"http://{advertised(settings)}:{settings.port}"
     endpoints = {
         "baseUrl": base,
         "embeddings": base + "/v1/embeddings",
         "models": base + "/v1/models",
         "health": base + "/health",
-        "d3": {
-            "url": base + "/v1/systemone",
-            "ready": False,
-            "reason": "SystemOne request/response schema is unknown",
-        },
+        "d3": {"url": base + "/v1/systemone", "ready": d3_state == "ready"},
         "tokenFile": settings.tokenFile,
     }
     write_json(SERVICE_DIRECTORY / "endpoints.json", endpoints)
     print(json.dumps(endpoints, indent=2))
+    return 0 if running and state == "ready" else NOT_RUNNING
+
+
+def start(settings):
+    env = dict(os.environ)
+    env["PHOTOSIFT_LAPTOP_CONFIG"] = str(SERVICE_DIRECTORY / "laptop.json")
+    started = []
     try:
-        health = fetch(f"http://127.0.0.1:{settings.port}/health")
-        print("Embedding:", health["embedding"]["state"])
-    except (OSError, ValueError, KeyError):
-        print("Embedding endpoint unavailable")
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["start", "stop", "status"])
-    args = parser.parse_args()
-    SERVICE_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    with FileLock(str(SERVICE_DIRECTORY / "manager.lock"), timeout=10):
-        records = json.loads(STATE.read_text()) if STATE.exists() else {}
-        if args.action == "stop":
-            for record in reversed(list(records.values())):
-                stop_process(record)
-            write_json(STATE, {})
-            print(
-                "PhotoSift-owned services stopped. Shared Ollama instances were left alone."
-            )
-            return
-        settings = load_settings()
-        if args.action == "status":
-            report(settings, records)
-            return
-        records = {name: record for name, record in records.items() if owned(record)}
-        old = set(records)
-        env = dict(os.environ)
-        env["PHOTOSIFT_LAPTOP_CONFIG"] = str(SERVICE_DIRECTORY / "laptop.json")
-        try:
+        with locked():
+            records = {n: r for n, r in read_records().items() if owned(r)}
+            write_json(STATE, records)
             if "ollama" not in records:
                 executable = settings.ollamaExecutable or shutil.which("ollama")
                 fallback = (
@@ -195,31 +211,78 @@ def main():
                     "OLLAMA_NO_CLOUD": "1",
                 }
                 launch("ollama", [executable, "serve"], ollama_env, records)
-            wait_ready(
-                f"http://127.0.0.1:{settings.ollamaPort}/api/version",
-                lambda v: "version" in v,
-                records["ollama"],
-                60,
-            )
+                started.append("ollama")
+            ollama = records["ollama"]
+        wait_ready(
+            f"http://127.0.0.1:{settings.ollamaPort}/api/version",
+            lambda v: "version" in v,
+            ollama,
+            60,
+        )
+        with locked():
+            records = read_records()
             if "models" not in records:
                 port_free(settings.port)
                 launch("models", [sys.executable, "-m", "laptop"], env, records)
-            wait_ready(
-                f"http://127.0.0.1:{settings.port}/health",
-                lambda v: (
-                    v.get("service") == "photosift-laptop"
-                    and v["embedding"]["state"] == "ready"
-                ),
-                records["models"],
-            )
-            report(settings, records)
-        except Exception:
-            for name in list(records):
-                if name not in old:
+                started.append("models")
+            models = records["models"]
+        wait_ready(
+            f"http://127.0.0.1:{settings.port}/health",
+            lambda v: (
+                v.get("service") == "photosift-laptop"
+                and v["embedding"]["state"] == "ready"
+            ),
+            models,
+        )
+        with locked():
+            records = read_records()
+            command = agent_command()
+            if command and "agent" not in records:
+                launch("agent", command, env, records)
+                started.append("agent")
+                # A bad config exits at once; show that now, not at the next Status.
+                time.sleep(3)
+            return report(settings, records)
+    except Exception:
+        with locked():
+            records = read_records()
+            for name in started:
+                # Only what this run launched is undone. A failed agent keeps the loaded model.
+                if name in records:
                     stop_process(records.pop(name))
             write_json(STATE, records)
-            raise
+        raise
+
+
+def stop():
+    with locked():
+        records = read_records()
+        for record in reversed(list(records.values())):
+            stop_process(record)
+        write_json(STATE, {})
+    print("PhotoSift-owned services stopped. Shared Ollama instances were left alone.")
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=["start", "stop", "status"])
+    args = parser.parse_args(argv)
+    SERVICE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    try:
+        if args.action == "stop":
+            return stop()
+        settings = load_settings()
+        if args.action == "status":
+            with locked():
+                return report(settings, read_records())
+        return start(settings)
+    except Timeout:
+        print("Another Start or Stop is changing services; try again.", file=sys.stderr)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -103,7 +103,8 @@ Used for:
 - extra assessment of uncertain grouping candidates.
 
 ### Protocol
-- The existing integration uses the **decision protocol at `/v1/systemone`**.
+- It uses Ollama's documented **decision API at `/v1/systemone`**
+  ([reference](https://docs.ollama.com/api/systemone)).
 - Do **not** assume this model supports Ollama `/api/chat`.
 - Other vision models can be added later, each with its own explicitly configured
   compatible protocol.

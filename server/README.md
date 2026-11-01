@@ -1,8 +1,8 @@
 # PhotoSift backend
 
 Python 3.12, FastAPI/Pydantic, SQLite WAL on local disk, a Zima background worker and a
-separate laptop preparation pull agent. **The restored frontend is unchanged and still
-uses its original mock data.** No real photo library is seeded or assumed by the backend.
+separate laptop preparation pull agent. The frontend in `web/` reads and writes only this
+API; it holds no mock data. No real photo library is seeded or assumed by the backend.
 
 ## Run
 
@@ -21,10 +21,13 @@ In another terminal from the same directory:
 .\.venv\Scripts\python -m worker
 ```
 
-Open <http://127.0.0.1:8000/docs>. The API can also serve an existing `web/dist` build,
-which is the original mock UI, not a connected real-library UI. Unknown `/api` paths remain
-JSON 404s. `python -m worker --once` drains ready scans, review/undo jobs and approved
-exports. It does not wait for unexpired leases of stopped processes.
+Open <http://127.0.0.1:8000/docs> for the API. For the app, either build the frontend once
+(`pnpm run build` in `web/`) and open <http://127.0.0.1:8000>, or run `pnpm dev` in `web/`
+and open <http://localhost:3000>, which proxies `/api` here (`PHOTOSIFT_API` overrides the
+target). Scans, bulk actions, large undos and exports wait until the worker is running.
+Unknown `/api` paths remain JSON 404s. `python -m worker --once` drains ready scans,
+review/undo jobs and approved exports. It does not wait for unexpired leases of stopped
+processes.
 
 Default app data is `.data/photosift.sqlite3`. To change it, set `PHOTOSIFT_DB` to the same
 absolute **local-disk** filename on server and Zima worker. Do not place SQLite/WAL on SMB
@@ -44,16 +47,26 @@ Configure the laptop independently using [agent/README.md](../agent/README.md).
 | Review | Group counts, global server-side grid grouping, bounded pages, loaded-query fingerprints, frozen selections, durable bulk jobs, conflicts, version-aware undo, audit |
 | Preparation | Mapped read-only laptop source reads, hash/version checks, oriented first-frame decode, EXIF, thumbnails/previews, pHash/dHash, quality signals, optional checksum-pinned YuNet |
 | Dispatch/cache | Authenticated claims, renewals, source-version binding, typed per-image results, duplicate acknowledgement, bounded atomic cache publication, explicit failures |
-| Embedding infrastructure | Isolated eval index registry, full fingerprints, normalized/dimension-checked vector ingestion, prompt packs, held-out sample comparison, explicit backfill-gated primary promotion |
+| Embedding | One explicitly active index filled by leased laptop jobs, queued automatically after preparation; isolated eval index registry, full fingerprints, normalized/dimension-checked vector ingestion, prompt packs encoded on the laptop, labelled samples with server-side event-group splits, held-out comparison reports with cut-offs chosen on the train split, explicit backfill-gated primary promotion |
 | Suggestions | Bounded prompt-scoring batches with provenance and conservative protection gate; same-index pHash/time neighbor suggestions; deterministic time-neighbor event suggestions; no final decision writes |
 | Search | Filename/path search; example-image similarity using an explicitly promoted primary index. New semantic text encoding is pending a real encoder adapter |
 | Export | Frozen copy plans, plan-bound approval, independent checksum-verified copies, exclusive publication, journal, recovery, pause/resume/retry, atomic manifests and identity/hash-checked rollback |
 | Settings/events | Optimistic settings, manual group overrides, event rename/confirm/merge/split, preserved manual event memberships/edits |
 
-There is **no selected primary embedding model**, GPU benchmark or D3 adapter. Embedding
-runtime execution still needs the selected checkpoint's actual preprocessing and matching
-text encoder. No generic arbitrary JSON is accepted as a substitute. D3's `/v1/systemone`
-request/response schema is absent from the docs; its jobs remain explicitly unconfigured.
+No index is promoted by default. Photos stay Unclassified until the owner encodes prompts, labels
+a sample, reads the report, promotes and runs grouping; see the [agent guide](../agent/README.md).
+D3 Nano runs only after `--configure-assessment`. Its answers become evidence and holds, and never
+a Keep or Clutter decision:
+
+| Axis | Yes at or above | No at or below | Between |
+|---|---|---|---|
+| Sensitive | 0.5 | 0.02 | Unknown: held, and out of `Organized/` |
+| Worth keeping | 0.5 | 0.2 | Unknown: held |
+| People | 0.5 (protects the photo) | 0.1 (stands in for an unrun face check) | Unknown: held |
+
+A clear "no" on sensitive lets a photo show unblurred and reach `Organized/`. The answers are model
+signals, and their accuracy on real IDs and private records has not been measured. Each result
+keeps D3's raw answers, its duration, and the model digest, Ollama version and question version.
 OCR, optional personal-classifier training and Immich API integration are not implemented.
 
 ## Inventory and review API
@@ -110,12 +123,15 @@ All writes remain on Zima. Request payloads are capped before JSON/base64 parsin
 | Model operation | Endpoint |
 |---|---|
 | Register/list eval spaces | `POST/GET /api/indexes` |
+| Choose the index the laptop fills | `POST /api/pipeline/embedding/configure`, `GET /api/pipeline/embedding` |
 | Queue prepared content | `POST /api/indexes/{id}/queue` with explicit `contentIds` |
 | Frozen labelled sample | `POST /api/comparison/samples` |
 | Versioned prompt vectors | `POST /api/indexes/{id}/prompts` |
 | Held-out category metrics | `POST /api/indexes/{id}/evaluate` |
 | Explicit primary selection | `POST /api/indexes/{id}/promote` |
+| Activate D3 assessment | `POST /api/pipeline/assessment/configure`, `GET /api/pipeline/assessment` |
 | Per-image GPU results | Authenticated `POST /api/agent/jobs/{id}/result` |
+| Hand a job back without failing it | Authenticated `POST /api/agent/jobs/{id}/release` |
 | Stage failures/status | `GET /api/pipeline/jobs?root=&stage=&state=failed` |
 | Prompt scoring | `POST /api/pipeline/score` |
 | Neighbor/event suggestions | `POST /api/pipeline/suggest-neighbors`, `/api/pipeline/suggest-events` |
@@ -132,7 +148,7 @@ on the **same sample ID**; synthetic test metrics are not real model-quality mea
 Scoring requires the primary index, matching prompt/report versions and explicit margin
 thresholds. It processes at most the requested page size; follow `nextPage` for another batch.
 Scores/margins are ranking signals, not probabilities. It never resolves sensitivity/importance
-from embeddings. Unresolved content queues an unconfigured D3 assessment and stays held.
+from embeddings. Unresolved content queues a D3 assessment and stays held.
 
 Neighbor suggestions require explicit pHash, similarity, time and neighbor bounds, remain
 within one effective group and are unticked. Time-event suggestions require explicit gap/count
@@ -187,13 +203,20 @@ fingerprints, stale/replayed results, isolated vector arithmetic, comparisons, c
 triage, neighbor/event suggestion rules, actual verified copy/rollback and publication-crash
 recovery. Symbolic-link creation may be skipped on Windows without that privilege.
 
-Current verification: **59 passed, 1 skipped** on Windows/Python 3.12.10. Ruff and dependency
+Current verification: **119 passed, 1 skipped** on Windows/Python 3.12.10. Ruff and dependency
 checks pass. The live smoke exercises API, Zima worker and laptop preparation agent as separate
 processes over HTTP. One Starlette/httpx test-client deprecation warning remains.
 
-No real library/share/Zima deployment, GPU throughput, native image/text encoder checkpoint,
-real YuNet accuracy, D3 protocol, Linux rename path or SMB export behavior has been verified.
-The frontend remains untouched. Optional learning and Immich APIs are later work.
+Embedding jobs also ran against the real RTX 5060 service on 240 generated 12 MP JPEGs, on a
+scratch database and including a killed model service mid-job. About 1.5 s per photo for
+preparation and embedding together; real photos may differ.
 
-Migrations `001`–`008` are append-only and hash-checked. Never edit an applied migration.
+D3 Nano ran on the real GPU on 58 generated images and a read-only pass over 15 real photos, on a
+scratch database, at a median of 1.4 s per photo. It flagged or held all 24 fake IDs, cards and
+records, and flagged none of 34 plain images. Generated images say little about real documents.
+
+No real library/share/Zima deployment, real model accuracy, real YuNet accuracy, Linux rename path
+or SMB export behavior has been verified. Optional learning and Immich APIs are later work.
+
+Migrations `001`–`010` are append-only and hash-checked. Never edit an applied migration.
 Back up SQLite with its backup API or coordinated stopped services; do not omit a live WAL.

@@ -3,19 +3,36 @@
 import argparse
 import json
 import os
+import secrets
 import threading
 import time
 from pathlib import Path
 
 import httpx
 
+from agent.assess import assess_payload, contract
+from agent.embed import (
+    Gateway,
+    GatewayError,
+    Unavailable,
+    embed_payload,
+    index_config,
+    prompt_pack,
+)
 from agent.prepare import configuration, prepare
 from server.db import fingerprint
 from server.preparation_contract import PreparationConfig
 
+# Beyond this, a job the gateway keeps refusing while healthy is reported instead of retried.
+MAX_EMBED_ATTEMPTS = 5
 
-def execute(client, claim, root_mappings, config, model_path=None):
-    lease = {key: claim[key] for key in ("owner", "token", "attempt")}
+
+def lease_of(claim):
+    return {key: claim[key] for key in ("owner", "token", "attempt")}
+
+
+def leased(client, claim, work):
+    lease = lease_of(claim)
     stop, errors = threading.Event(), []
 
     def heartbeat():
@@ -32,14 +49,7 @@ def execute(client, claim, root_mappings, config, model_path=None):
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
     try:
-        if claim["rootId"] not in root_mappings:
-            raise ValueError("No local read-only mapping for the claimed root ID")
-        if claim["fingerprint"] != fingerprint(config.model_dump()):
-            raise ValueError("Claim fingerprint does not match this executor")
-        root = Path(root_mappings[claim["rootId"]])
-        if not root.is_absolute():
-            raise ValueError("Root mapping must be absolute")
-        result = prepare(root, claim, config, model_path)
+        payload = work()
         if errors:
             raise RuntimeError("Lease renewal failed") from errors[0]
         response = client.post(
@@ -48,7 +58,7 @@ def execute(client, claim, root_mappings, config, model_path=None):
                 **lease,
                 "sha256": claim["sha256"],
                 "fingerprint": claim["fingerprint"],
-                "payload": result.model_dump(),
+                "payload": payload,
             },
         )
         response.raise_for_status()
@@ -58,12 +68,172 @@ def execute(client, claim, root_mappings, config, model_path=None):
         thread.join(timeout=35)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="PhotoSift laptop preparation pull agent"
+def execute(client, claim, root_mappings, config, model_path=None):
+    def work():
+        if claim["rootId"] not in root_mappings:
+            raise ValueError("No local read-only mapping for the claimed root ID")
+        if claim["fingerprint"] != fingerprint(config.model_dump()):
+            raise ValueError("Claim fingerprint does not match this executor")
+        root = Path(root_mappings[claim["rootId"]])
+        if not root.is_absolute():
+            raise ValueError("Root mapping must be absolute")
+        return prepare(root, claim, config, model_path).model_dump()
+
+    return leased(client, claim, work)
+
+
+def report_failure(client, claim, exc):
+    client.post(
+        "/api/agent/jobs/" + claim["jobId"] + "/fail",
+        json={**lease_of(claim), "reason": str(exc)[:1000], "state": "failed"},
     )
+
+
+def run_on_gpu(client, claim, label, work):
+    """Run one model job. Raises Unavailable after handing the job back for a later try."""
+    try:
+        return leased(client, claim, work)
+    except Unavailable as exc:
+        if isinstance(exc, GatewayError) and claim["attempt"] >= MAX_EMBED_ATTEMPTS:
+            report_failure(client, claim, exc)
+            print(label, "failed:", str(exc))
+            return None
+        client.post(
+            "/api/agent/jobs/" + claim["jobId"] + "/release",
+            json={**lease_of(claim), "reason": str(exc)[:1000]},
+        )
+        raise
+    except Exception as exc:
+        report_failure(client, claim, exc)
+        print(label, "failed:", str(exc))
+        return None
+
+
+def execute_embedding(client, claim, root_mappings, gateway, target):
+    return run_on_gpu(
+        client,
+        claim,
+        "Embedding",
+        lambda: embed_payload(claim, root_mappings, gateway, target),
+    )
+
+
+def execute_assessment(client, claim, root_mappings, gateway, target):
+    return run_on_gpu(
+        client,
+        claim,
+        "Assessment",
+        lambda: assess_payload(claim, root_mappings, gateway, target),
+    )
+
+
+class Notes:
+    """Say a waiting reason once, not on every poll."""
+
+    def __init__(self):
+        self.last = None
+
+    def say(self, text):
+        if text != self.last:
+            print(text, flush=True)
+        self.last = text
+
+
+def embedding_target(client, gateway, notes):
+    """The active index when this laptop's exact model matches it, otherwise None."""
+    try:
+        health = gateway.health()
+    except Unavailable as exc:
+        notes.say("Embedding waiting: " + str(exc))
+        return None
+    active = client.get("/api/pipeline/embedding")
+    active.raise_for_status()
+    active = active.json()
+    if not active:
+        notes.say(
+            "Embedding waiting: no index is active; run once with --configure-embedding"
+        )
+        return None
+    if active["fingerprint"] != fingerprint(index_config(health["indexConfig"])):
+        notes.say(
+            "Embedding waiting: this laptop's model differs from the active index. Nothing is mixed; run with --configure-embedding to fill a new index"
+        )
+        return None
+    notes.say("Embedding ready: index " + active["indexId"])
+    return {**active, "gatewayFingerprint": health["fingerprint"]}
+
+
+def assessment_target(client, gateway, notes):
+    """The active assessment when this laptop's exact D3 setup matches it, otherwise None."""
+    try:
+        d3 = gateway.d3()
+    except Unavailable as exc:
+        notes.say("Assessment waiting: " + str(exc))
+        return None
+    active = client.get("/api/pipeline/assessment")
+    active.raise_for_status()
+    active = active.json()
+    if not active:
+        notes.say(
+            "Assessment waiting: not active; run once with --configure-assessment"
+        )
+        return None
+    if active["config"] != contract(d3):
+        notes.say(
+            "Assessment waiting: this laptop's D3 setup differs from the active one; run with --configure-assessment to assess again"
+        )
+        return None
+    notes.say("Assessment ready")
+    return active
+
+
+def resolve(config_path, value):
+    path = Path(value)
+    return path if path.is_absolute() else config_path.resolve().parent / path
+
+
+def init_local(path, server_url):
+    """Write a config for a laptop that runs the server itself, so every path is shared."""
+    existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    url = existing.get("serverUrl", server_url)
+    with httpx.Client(base_url=url, timeout=15, trust_env=False) as client:
+        response = client.get("/api/roots")
+        response.raise_for_status()
+        roots = response.json()
+    data = Path(os.environ.get("PHOTOSIFT_DB", ".data/photosift.sqlite3")).resolve()
+    token = data.parent / "agent-api.token"
+    token.parent.mkdir(parents=True, exist_ok=True)
+    if not token.exists():
+        with token.open("x", encoding="utf-8") as output:
+            output.write(secrets.token_urlsafe(48))
+    settings = {
+        "serverUrl": url,
+        "owner": "gpu-laptop",
+        "tokenFile": str(token),
+        "preparation": configuration().model_dump(),
+        "embedding": {
+            "gatewayUrl": "http://127.0.0.1:8787",
+            "tokenFile": str(data.parent / "services" / "model-api.token"),
+        },
+        **existing,
+    }
+    settings["rootMappings"] = {
+        **{root["id"]: root["path"] for root in roots},
+        **existing.get("rootMappings", {}),
+    }
+    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    print(f"Wrote {path} with {len(settings['rootMappings'])} library mapping(s).")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="PhotoSift laptop pull agent")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--print-preparation-config", action="store_true")
+    parser.add_argument(
+        "--init-local",
+        metavar="SERVER_URL",
+        help="Create or extend --config for a server running on this same machine",
+    )
     parser.add_argument(
         "--yunet",
         type=Path,
@@ -74,6 +244,21 @@ def main():
         action="store_true",
         help="Explicitly activate this exact preparation contract on Zima",
     )
+    parser.add_argument(
+        "--configure-embedding",
+        action="store_true",
+        help="Explicitly fill an index for this laptop's exact model; never promotes it",
+    )
+    parser.add_argument(
+        "--configure-assessment",
+        action="store_true",
+        help="Explicitly activate D3 Nano assessment for this laptop's exact setup",
+    )
+    parser.add_argument(
+        "--encode-prompts",
+        action="store_true",
+        help="Encode the prompt pack under the active index, save it, and exit",
+    )
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     if args.print_preparation_config:
@@ -81,6 +266,9 @@ def main():
         return
     if not args.config:
         parser.error("--config is required")
+    if args.init_local:
+        init_local(args.config, args.init_local)
+        return
     settings = json.loads(args.config.read_text(encoding="utf-8"))
     config = PreparationConfig.model_validate(settings["preparation"])
     actual = configuration(
@@ -102,56 +290,135 @@ def main():
         parser.error(
             "Installed runtime/model differs from the exact configured fingerprint"
         )
-    token = os.environ.get(settings.get("tokenEnv", "PHOTOSIFT_AGENT_TOKEN"))
+    if settings.get("tokenFile"):
+        token = (
+            resolve(args.config, settings["tokenFile"])
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    else:
+        token = os.environ.get(settings.get("tokenEnv", "PHOTOSIFT_AGENT_TOKEN"))
     if not token:
         parser.error("Configured token environment variable is unset")
+    gateway = None
+    if settings.get("embedding"):
+        gateway = Gateway(
+            settings["embedding"]["gatewayUrl"],
+            resolve(args.config, settings["embedding"]["tokenFile"])
+            .read_text(encoding="utf-8")
+            .strip(),
+        )
+    elif args.configure_embedding or args.encode_prompts or args.configure_assessment:
+        parser.error("Model options need an embedding section in the config")
+    notes, assess_notes = Notes(), Notes()
     with httpx.Client(
         base_url=settings["serverUrl"],
         headers={"Authorization": "Bearer " + token},
         timeout=45,
+        trust_env=False,
     ) as client:
         if args.configure_preparation:
             response = client.post(
                 "/api/pipeline/preparation/configure", json=config.model_dump()
             )
             response.raise_for_status()
+        if args.configure_embedding:
+            try:
+                health = gateway.health()
+            except Unavailable as exc:
+                parser.error(f"{exc}. Run Start-PhotoSift.ps1 first")
+            response = client.post(
+                "/api/pipeline/embedding/configure",
+                json=index_config(health["indexConfig"]),
+            )
+            response.raise_for_status()
+        if args.configure_assessment:
+            try:
+                d3 = gateway.d3()
+            except Unavailable as exc:
+                parser.error(f"{exc}. Run Start-PhotoSift.ps1 first")
+            response = client.post(
+                "/api/pipeline/assessment/configure", json=contract(d3)
+            )
+            response.raise_for_status()
+        if args.encode_prompts:
+            target = embedding_target(client, gateway, notes)
+            if not target:
+                parser.error("Prompts were not encoded; see the reason above")
+            response = client.post(
+                "/api/indexes/" + target["indexId"] + "/prompts",
+                json=prompt_pack(gateway, target),
+            )
+            response.raise_for_status()
+            saved = response.json()
+            print(
+                f"Prompt pack {saved['version']}: {saved['prompts']} prompts",
+                "saved" if saved["created"] else "already saved; vectors kept",
+                f"on index {saved['indexId']}",
+            )
+            return
         digest = fingerprint(config.model_dump())
+
+        def claim_next(stage, stage_fingerprint):
+            response = client.post(
+                "/api/agent/claim",
+                json={
+                    "owner": settings["owner"],
+                    "stage": stage,
+                    "fingerprint": stage_fingerprint,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+
         while True:
             try:
-                response = client.post(
-                    "/api/agent/claim",
-                    json={
-                        "owner": settings["owner"],
-                        "stage": "prepare",
-                        "fingerprint": digest,
-                    },
-                )
-                response.raise_for_status()
-                claim = response.json()
+                claim = claim_next("prepare", digest)
                 if claim:
                     try:
                         execute(
                             client, claim, settings["rootMappings"], config, args.yunet
                         )
                     except Exception as exc:
-                        report = {
-                            key: claim[key] for key in ("owner", "token", "attempt")
-                        }
-                        report.update({"reason": str(exc)[:1000], "state": "failed"})
-                        client.post(
-                            "/api/agent/jobs/" + claim["jobId"] + "/fail", json=report
-                        )
+                        report_failure(client, claim, exc)
                         print("Preparation failed:", str(exc))
-                elif args.once:
+                    continue
+                target = gateway and embedding_target(client, gateway, notes)
+                claim = target and claim_next("embed", target["fingerprint"])
+                if claim:
+                    try:
+                        execute_embedding(
+                            client, claim, settings["rootMappings"], gateway, target
+                        )
+                    except Unavailable as exc:
+                        notes.say("Embedding waiting: " + str(exc))
+                        if args.once:
+                            break
+                        time.sleep(5)
+                    continue
+                target = gateway and assessment_target(client, gateway, assess_notes)
+                claim = target and claim_next("assess", target["fingerprint"])
+                if claim:
+                    try:
+                        execute_assessment(
+                            client, claim, settings["rootMappings"], gateway, target
+                        )
+                    except Unavailable as exc:
+                        assess_notes.say("Assessment waiting: " + str(exc))
+                        if args.once:
+                            break
+                        time.sleep(5)
+                    continue
+                if args.once:
                     break
-                else:
-                    time.sleep(2)
+                time.sleep(2)
             except httpx.HTTPError as exc:
                 if args.once:
                     raise
                 print(
                     "Server unavailable; accepted results remain on Zima:",
-                    type(exc).__name__,
+                    str(exc)[:200] or type(exc).__name__,
+                    flush=True,
                 )
                 time.sleep(5)
 

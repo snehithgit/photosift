@@ -1,0 +1,69 @@
+# Import in ZimaOS with App Store > Custom Install > Import, then change the library path below.
+name: photosift
+
+services:
+  photosift:
+    image: ghcr.io/snehithgit/photosift:latest
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "8000:8000"
+    environment:
+      # Same value as the laptop agent. Empty means the agent can't connect yet.
+      PHOTOSIFT_AGENT_TOKEN: ${PHOTOSIFT_AGENT_TOKEN:-}
+    volumes:
+      # App data must stay on a local disk, not a network share.
+      - /DATA/AppData/photosift:/data
+      # CHANGE THIS to your photo folder. Keep :ro so originals can't be written to.
+      - /DATA/Gallery:/library:ro
+      - /DATA/Exports/PhotoSift:/exports
+    x-casaos:
+      envs:
+        - container: PHOTOSIFT_AGENT_TOKEN
+          description:
+            en_us: Long random secret, shared with the laptop agent
+      volumes:
+        - container: /data
+          description:
+            en_us: App database and thumbnails; keep on a local disk
+        - container: /library
+          description:
+            en_us: Your photos, mounted read-only
+        - container: /exports
+          description:
+            en_us: Where approved exports are copied
+
+  worker:
+    image: ghcr.io/snehithgit/photosift:latest
+    restart: unless-stopped
+    command: ["python", "-m", "worker"]
+    # The server applies database migrations first.
+    depends_on:
+      photosift:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+    volumes:
+      - /DATA/AppData/photosift:/data
+      - /DATA/Gallery:/library:ro
+      - /DATA/Exports/PhotoSift:/exports
+
+x-casaos:
+  architectures:
+    - amd64
+  main: photosift
+  author: snehithgit
+  developer: snehithgit
+  category: Utilities
+  title:
+    en_us: PhotoSift
+  tagline:
+    en_us: Sort and clear out a large photo library
+  description:
+    en_us: Local photo decluttering. Originals stay read-only, and nothing leaves your network.
+  port_map: "8000"
+  scheme: http
+  index: /

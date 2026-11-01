@@ -69,6 +69,7 @@ class Photo(Contract):
     protected: ProtectedInfo | None
     sensitive: Tri
     importance: Tri
+    people: Tri = "unknown"
     faces: list[Face] | Literal["not_checked"]
     evidence: list[Evidence]
     duplicateSetId: str | None = None
@@ -104,7 +105,9 @@ class PhotoQuery(Contract):
     duplicate: bool = False
     decisions: Literal["undecided", "all", "keep", "clutter", "later"] = "undecided"
     reviewed: bool = False
-    sort: Literal["default", "margin", "date", "size", "name"] = "default"
+    # Event views organise what is kept: photos set aside drop out of their cards and counts.
+    hideSetAside: bool = False
+    sort: Literal["default", "margin", "date", "size", "name", "content"] = "default"
     by: Literal["none", "folder", "month", "event"] = "none"
     page: int = Field(default=1, ge=1)
     limit: int = Field(default=180, ge=1, le=500)
@@ -128,7 +131,7 @@ class InventoryQuery(PhotoQuery):
 
 
 class DuplicateQuery(PhotoQuery):
-    kind: Literal["all", "exact", "possible", "burst"] = "all"
+    kind: Literal["all", "exact", "possible", "burst", "similar"] = "all"
 
 
 class SearchQuery(PhotoQuery):
@@ -254,4 +257,8 @@ class ResultInput(LeaseInput):
 
 class FailureInput(LeaseInput):
     state: Literal["failed", "paused"]
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class ReleaseInput(LeaseInput):
     reason: str = Field(min_length=1, max_length=1000)

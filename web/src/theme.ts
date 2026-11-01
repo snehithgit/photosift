@@ -34,8 +34,6 @@ export function getThumbSize(): ThumbSize {
 export function setThumbSize(size: ThumbSize) { write('photosift:thumb-size', size); }
 export function getAutoAdvance(): boolean { return read('photosift:auto-advance') === 'on'; }
 export function setAutoAdvance(on: boolean) { write('photosift:auto-advance', on ? 'on' : 'off'); }
-export function isSetupComplete(): boolean { return read('photosift:setup-complete') === 'yes'; }
-export function markSetupComplete() { write('photosift:setup-complete', 'yes'); }
 
 // Called once before the first render so the page never flashes the wrong theme.
 export function applyStoredTheme() {

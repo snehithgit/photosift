@@ -21,8 +21,13 @@ GROUPS = [
 
 # Effective protections are computed before filtering/counting, so folder/Keep changes cannot
 # leave stale protected flags in selections. Unknown assessment is a suggestion hold, not 'No'.
+# The protected-folder list is read once per statement; without folders no file lookup runs.
 BASE = """
-WITH base AS (
+WITH protected_folder AS MATERIALIZED (
+ SELECT json_extract(pf.value,'$.root') AS root,json_extract(pf.value,'$.folder') AS folder
+ FROM json_each((SELECT json_extract(value,'$.protectedFolders') FROM settings WHERE section='protection')) pf
+),
+base AS (
  SELECT p.*,c.size,d.decision,d.version AS decision_version,
  COALESCE(g.manual_group,g.ai_group) AS group_id,
  CASE WHEN g.manual_group IS NULL THEN 'ai' ELSE 'manual' END AS group_source,
@@ -31,9 +36,8 @@ WITH base AS (
  CASE WHEN d.decision='keep' OR json_array_length(p.protection)>0 OR p.sensitive='yes' OR p.importance='yes'
  OR p.faces!='"not_checked"' AND json_array_length(p.faces)>0
  OR COALESCE(g.manual_group,g.ai_group)='documents' OR p.document_type='IDs'
- OR EXISTS(SELECT 1 FROM file_instances f,json_each((SELECT json_extract(value,'$.protectedFolders') FROM settings WHERE section='protection')) pf
- WHERE f.content_id=c.id AND f.root_id=json_extract(pf.value,'$.root')
- AND (json_extract(pf.value,'$.folder')='' OR f.path=json_extract(pf.value,'$.folder') OR substr(f.path,1,length(json_extract(pf.value,'$.folder'))+1)=json_extract(pf.value,'$.folder')||'/'))
+ OR EXISTS(SELECT 1 FROM protected_folder pf JOIN file_instances f ON f.content_id=c.id AND f.root_id=pf.root
+ WHERE pf.folder='' OR f.path=pf.folder OR substr(f.path,1,length(pf.folder)+1)=pf.folder||'/')
  OR p.capture_source IN ('exif','filename') AND p.capture_date < (SELECT json_extract(value,'$.ageBefore') FROM settings WHERE section='protection')
  THEN 1 ELSE 0 END AS is_protected,
  CASE WHEN EXISTS(SELECT 1 FROM file_instances f WHERE f.content_id=c.id AND state='available') THEN 'available'
@@ -74,12 +78,15 @@ def where(query: PhotoQuery):
         clauses.append("lower(b.format)=lower(?)")
         params.append(query.format)
     if query.documentType:
-        clauses.append("b.document_type=?")
+        # A document not yet sorted into a subgroup is listed under Papers, never lost.
+        clauses.append("COALESCE(b.document_type,'Papers')=?")
         params.append(query.documentType)
     decision = "all" if query.reviewed else query.decisions
     if decision != "all":
         clauses.append("b.decision=?")
         params.append(decision)
+    if query.hideSetAside:
+        clauses.append("b.decision!='clutter'")
     if query.q:
         clauses.append(
             "(instr(lower(b.filename),lower(?))>0 OR EXISTS(SELECT 1 FROM file_instances f JOIN roots r ON r.id=f.root_id WHERE f.content_id=b.content_id AND instr(lower(r.path||'/'||f.path),lower(?))>0))"
@@ -168,7 +175,7 @@ def photo(c, row):
         or row["group_id"] in ("people", "events", "places", "documents")
         or sensitive != "no"
         or row["importance"] != "no"
-        or faces == "not_checked"
+        or (faces == "not_checked" and row["people"] != "no")
     ):
         triage = "needs_review"
     media = {
@@ -207,6 +214,7 @@ def photo(c, row):
             else None,
             sensitive=sensitive,
             importance=row["importance"],
+            people=row["people"],
             faces=faces,
             evidence=json.loads(row["evidence"]),
             duplicateSetId=row["duplicate_set"],
@@ -220,6 +228,24 @@ def photo(c, row):
         if result[optional] is None:
             result.pop(optional)
     return result
+
+
+def rows_by_id(c, ids):
+    """Full rows for one page, in the given order.
+
+    Sorting on `SELECT b.*` would compute every per-photo subquery for every match
+    before LIMIT applies, so callers pick and order ids first and load rows here.
+    """
+    if not ids:
+        return []
+    marks = ",".join("?" for _ in ids)
+    rows = {
+        row["content_id"]: row
+        for row in c.execute(
+            BASE + f"SELECT b.* FROM base b WHERE b.content_id IN ({marks})", list(ids)
+        )
+    }
+    return [rows[identifier] for identifier in ids if identifier in rows]
 
 
 def detail(c, content_id):
@@ -239,6 +265,8 @@ def list_photos(c, query):
         "date": "b.capture_date DESC",
         "name": "b.filename COLLATE NOCASE",
         "size": "b.size DESC",
+        # Content IDs are SHA-256, so this order is an unbiased sample of the library.
+        "content": "b.content_id",
         "margin": "CASE WHEN instr(b.evidence,'small_margin')>0 THEN 0 ELSE 1 END,b.band",
     }
     # Group membership/order is computed over the ENTIRE query before page boundaries.
@@ -284,12 +312,16 @@ def list_photos(c, query):
         + sorts[query.sort]
         + ",b.content_id"
     )
-    total = c.execute(
-        BASE + "SELECT COUNT(*) FROM base b WHERE " + condition, params
-    ).fetchone()[0]
-    rows = c.execute(
+    totals = c.execute(
         BASE
-        + "SELECT b.*,"
+        + "SELECT COUNT(*) AS total,COALESCE(SUM(is_protected),0) AS protected FROM base b WHERE "
+        + condition,
+        params,
+    ).fetchone()
+    total = totals["total"]
+    keyed = c.execute(
+        BASE
+        + "SELECT b.content_id,"
         + key
         + " AS grid_key FROM base b WHERE "
         + condition
@@ -298,6 +330,7 @@ def list_photos(c, query):
         + " LIMIT ? OFFSET ?",
         [*params, query.limit, (query.page - 1) * query.limit],
     ).fetchall()
+    rows = rows_by_id(c, [row["content_id"] for row in keyed])
     groups = (
         c.execute(
             BASE
@@ -314,7 +347,7 @@ def list_photos(c, query):
     )
     counts = {r["key"]: r["count"] for r in groups}
     sections = []
-    for index, row in enumerate(rows):
+    for index, row in enumerate(keyed):
         if not sections or sections[-1]["key"] != row["grid_key"]:
             sections.append(
                 {
@@ -328,6 +361,7 @@ def list_photos(c, query):
     return {
         "items": [photo(c, r) for r in rows],
         "total": total,
+        "protectedCount": totals["protected"],
         "page": query.page,
         "limit": query.limit,
         "revision": revision(c),
@@ -350,17 +384,21 @@ def group_stats(c, query):
         params,
     ).fetchall()
     counts = {r["group_id"]: r for r in rows}
+    # Covers show what is left to review and never a sensitive image.
+    cover_ids = {}
+    for row in c.execute(
+        BASE
+        + "SELECT content_id,group_id FROM (SELECT b.content_id,b.group_id,ROW_NUMBER() OVER (PARTITION BY b.group_id ORDER BY b.decision!='undecided',b.content_id) AS position FROM base b WHERE "
+        + condition
+        + " AND b.sensitive!='yes') WHERE position<=4 ORDER BY group_id,position",
+        params,
+    ):
+        cover_ids.setdefault(row["group_id"], []).append(row["content_id"])
     result = []
     for identifier, name, section, icon in GROUPS:
         r = counts.get(identifier)
         all_count, undecided = (r["all_count"], r["undecided"]) if r else (0, 0)
-        covers = c.execute(
-            BASE
-            + "SELECT content_id FROM base b WHERE "
-            + condition
-            + " AND group_id=? ORDER BY content_id LIMIT 4",
-            [*params, identifier],
-        ).fetchall()
+        covers = rows_by_id(c, cover_ids.get(identifier, []))
         result.append(
             dict(
                 id=identifier,
@@ -377,7 +415,9 @@ def group_stats(c, query):
                 decided=all_count - undecided,
                 protected=r["protected"] if r else 0,
                 bands={b: r[b] if r else 0 for b in ("high", "medium", "low")},
-                coverIds=[r[0] for r in covers],
+                coverIds=[row["content_id"] for row in covers],
+                # Group cards draw these directly, so one request is enough for the overview.
+                covers=[photo(c, row) for row in covers],
             )
         )
     return result

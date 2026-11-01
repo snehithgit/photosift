@@ -7,9 +7,10 @@ import numpy as np
 from fastapi import HTTPException
 from pydantic import Field
 
+from server.assessments import UNCONFIGURED, active_spec, queue_active, triage
 from server.contracts import Contract, PhotoQuery
 from server.db import bump, fingerprint, now, packed, uid
-from server.embeddings import get_index
+from server.embeddings import get_index, rank
 from server.queries import detail, matched
 
 
@@ -35,23 +36,6 @@ class EventSuggestionRequest(Contract):
     query: PhotoQuery
     maxGapSeconds: float = Field(gt=0, le=7 * 86400, allow_inf_nan=False)
     minPhotos: int = Field(ge=2, le=10000)
-
-
-def triage(photo, band):
-    if photo["decision"] == "keep":
-        return "likely_keep"
-    if (
-        photo["protected"]
-        or photo["sensitive"] != "no"
-        or photo["importance"] != "no"
-        or photo["faces"] == "not_checked"
-    ):
-        return "needs_review"
-    if photo["groupId"] in ("people", "events", "places", "documents"):
-        return "likely_keep" if band != "low" else "needs_review"
-    if photo["groupId"] in ("screenshots", "memes", "badshots") and band == "high":
-        return "clutter_candidate"
-    return "needs_review"
 
 
 def score(c, request):
@@ -88,7 +72,7 @@ def score(c, request):
             now(),
         ),
     )
-    changed = 0
+    scored = changed = missing = 0
     members = matched(c, request.query)
     start = (request.query.page - 1) * request.query.limit
     for member in members[start : start + request.query.limit]:
@@ -97,22 +81,12 @@ def score(c, request):
             (member["content_id"], request.indexId),
         ).fetchone()
         if not vector:
+            missing += 1
             continue
         array = np.frombuffer(vector[0], dtype="<f4")
         if array.size != index["config"]["dimension"]:
             raise HTTPException(409, "Stored vector space is inconsistent")
-        classes = {}
-        for prompt, value in zip(prompts, matrix @ array, strict=True):
-            classes[prompt["category"]] = max(
-                classes.get(prompt["category"], -2), float(value)
-            )
-        ordered = sorted(classes.items(), key=lambda pair: pair[1], reverse=True)
-        if len(ordered) < 2:
-            raise HTTPException(
-                422, "At least two competing content categories are required"
-            )
-        group, best = ordered[0]
-        margin = best - ordered[1][1]
+        group, rival, margin, classes = rank(prompts, matrix, array)
         band = (
             "high"
             if margin >= request.highMargin
@@ -138,14 +112,18 @@ def score(c, request):
         evidence.append(
             {
                 "source": index["config"]["backend"],
-                "text": f"Prompt ranking: {group}; competing category {ordered[1][0]}; margin {margin:.4f} (ranking signal, not a probability)",
+                "text": f"Prompt ranking: {group}; competing category {rival}; margin {margin:.4f} (ranking signal, not a probability)",
                 "strength": "small_margin" if band == "low" else "strong",
             }
         )
-        c.execute(
-            "UPDATE photos SET band=?,triage=?,evidence=?,review_version=review_version+1 WHERE content_id=?",
-            (band, triage(p, band), packed(evidence), member["content_id"]),
-        )
+        verdict = (band, triage(p, band), packed(evidence))
+        # Scoring again to the same result must not disturb selections or undo.
+        if verdict != (member["band"], member["triage"], member["evidence"]):
+            c.execute(
+                "UPDATE photos SET band=?,triage=?,evidence=?,review_version=review_version+1 WHERE content_id=?",
+                (*verdict, member["content_id"]),
+            )
+            changed += 1
         c.execute(
             "INSERT INTO content_scores VALUES (?,?,?,?)",
             (identifier, member["content_id"], packed(classes), margin),
@@ -155,19 +133,21 @@ def score(c, request):
             or p["importance"] == "unknown"
             or p["sensitive"] == "unknown"
             or band == "low"
-        ):
+        ) and not queue_active(c, member["content_id"]):
             c.execute(
-                "INSERT OR IGNORE INTO stage_jobs(id,content_id,stage,fingerprint) VALUES (?,?,'assess','d3-systemone:unconfigured')",
-                (uid(), member["content_id"]),
+                "INSERT OR IGNORE INTO stage_jobs(id,content_id,stage,fingerprint) VALUES (?,?,'assess',?)",
+                (uid(), member["content_id"], UNCONFIGURED),
             )
-        changed += 1
+        scored += 1
     if changed:
         bump(c)
     return {
         "id": identifier,
-        "scored": changed,
+        "scored": scored,
+        "changed": changed,
+        "withoutVector": missing,
         "decisionsChanged": 0,
-        "assessmentConfigured": False,
+        "assessmentConfigured": active_spec(c) is not None,
         "total": len(members),
         "nextPage": request.query.page + 1
         if start + request.query.limit < len(members)

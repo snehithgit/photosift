@@ -6,7 +6,7 @@ The canonical processing contract is now [02 Pipeline](02-pipeline.md). Separate
 
 - Fresh project; Zima owns SQLite WAL, app state and export; laptop agent pulls leased work.
 - GPU laptop context: RTX 5060 Laptop GPU, 8 GB VRAM; verify available memory during benchmark.
-- Existing local D3 Nano was served by laptop Ollama using `/v1/systemone`. Test a fresh adapter fixture; do not assume `/api/chat` or unsupported output fields.
+- D3 Nano is served by laptop Ollama using `/v1/systemone`; do not assume `/api/chat` or unsupported output fields.
 - Export is independent copy-only. Hardlinks to originals are excluded.
 - First design targets one user; OCR is outside initial scope.
 
@@ -16,10 +16,10 @@ The canonical processing contract is now [02 Pipeline](02-pipeline.md). Separate
 - Updated owner direction (1 November 2026): choose a loading default now. Selected
   `google/siglip2-so400m-patch16-384` on the laptop; see [runtime guide](../laptop/README.md).
   Labelled PhotoSift evaluation, backfill and explicit primary-index promotion remain pending.
-- A docs-wide check found no SystemOne payload fixture; only its endpoint/model tag and an
-  explicit unknown-schema requirement. Do not infer a standard Ollama or llama.cpp protocol.
-- [ ] **`/v1/systemone` decision protocol:** the exact request/response schema and
-      decision fields. The D3 Nano adapter must match it exactly.
+- [x] **`/v1/systemone` decision protocol:** documented by Ollama at
+      <https://docs.ollama.com/capabilities/decision> and <https://docs.ollama.com/api/systemone>,
+      and confirmed against the installed D3 Nano on Ollama 0.40.13. See the
+      [runtime guide](../laptop/README.md). D3's accuracy on real private photos is not measured.
 - [ ] Available laptop GPU memory and measured throughput for each exact checkpoint/precision/batch size.
 - [ ] Which MobileCLIP2 variants are realistic on Zima's CPU for incremental imports?
 - [ ] Who builds the labelled comparison sample, and which categories does it need?

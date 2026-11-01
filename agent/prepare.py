@@ -52,13 +52,13 @@ def gps_value(exif):
         return None
 
 
-def prepare(root, claim, config: PreparationConfig, model_path=None):
+def read_verified(root, claim, max_bytes):
     # Only a mapped root and a validated relative path are used. No server absolute path.
     path = checked_path(root, claim["relativePath"])
     before = path.stat()
     if before.st_size != claim["size"] or before.st_mtime_ns != claim["mtimeNs"]:
         raise ValueError("Source changed; inventory refresh required")
-    if before.st_size > config.maxSourceBytes:
+    if before.st_size > max_bytes:
         raise ValueError("Source exceeds configured preparation memory bound")
     if not stat.S_ISREG(before.st_mode):
         raise ValueError("Mapped source is not a regular file")
@@ -69,15 +69,20 @@ def prepare(root, claim, config: PreparationConfig, model_path=None):
         opened = os.fstat(source.fileno())
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
             raise ValueError("Source identity changed before preparation")
-        data = source.read(config.maxSourceBytes + 1)
+        data = source.read(max_bytes + 1)
     after = checked_path(root, claim["relativePath"]).stat()
     if (
-        len(data) > config.maxSourceBytes
+        len(data) > max_bytes
         or (before.st_size, before.st_mtime_ns, before.st_ino)
         != (after.st_size, after.st_mtime_ns, after.st_ino)
         or hashlib.sha256(data).hexdigest() != claim["sha256"]
     ):
         raise ValueError("Source hash/version mismatch; inventory refresh required")
+    return path, data
+
+
+def prepare(root, claim, config: PreparationConfig, model_path=None):
+    path, data = read_verified(root, claim, config.maxSourceBytes)
     with Image.open(io.BytesIO(data)) as original:
         if original.width * original.height > config.maxPixels:
             raise ValueError("Image exceeds configured decode pixel bound")

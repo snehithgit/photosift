@@ -85,6 +85,16 @@ def renew(c, job_id, request):
     return {"expires": expiry}
 
 
+def release(c, job_id, request):
+    # The laptop could not run this job right now; that says nothing about the photo.
+    valid_lease(c, job_id, request)
+    c.execute(
+        "UPDATE stage_jobs SET state='queued',token=NULL,expires=NULL,error=? WHERE id=?",
+        (request.reason, job_id),
+    )
+    return {"state": "queued"}
+
+
 def submit(c, job_id, request):
     accepted = c.execute(
         "SELECT * FROM stage_results WHERE job_id=?", (job_id,)

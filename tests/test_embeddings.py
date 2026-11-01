@@ -96,6 +96,7 @@ def test_isolated_embedding_acceptance_comparison_and_explicit_promotion(
         "/api/indexes/" + index["id"] + "/prompts",
         json={
             "version": "fixture-v1",
+            "indexFingerprint": index["fingerprint"],
             "prompts": [
                 {"category": "people", "text": "fixture family", "vector": axis(0)},
                 {
