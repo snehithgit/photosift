@@ -175,7 +175,8 @@ Historical Phase 1 snapshot; section 8 supersedes its implementation-status boun
 ## 8. Backend continuation (1 November 2026)
 
 The owner requested remaining backend work while keeping the restored frontend unchanged.
-They explicitly said to **keep primary embedding selection pending**. They asked us to check
+They initially said to **keep primary embedding selection pending** (superseded by the
+later runtime setup request in section 9). They asked us to check
 the docs for D3; a full docs search confirmed that the `/v1/systemone` payload schema is still
 absent and explicitly marked unknown. No engine/protocol/model was silently substituted.
 
@@ -220,3 +221,34 @@ privilege; junction refusal is tested. The live smoke now runs API, Zima worker 
 preparation agent as separate real HTTP processes. All copy/preparation tests used temporary
 fixture libraries. One Starlette/httpx test-client deprecation warning remains. `web/` has
 no changes compared with the restored committed frontend.
+
+## 9. Laptop inference setup (1 November 2026)
+
+The owner later asked to select an embedding model now and prepare laptop services with
+start/stop scripts and URLs for Zima. The selected loading default is pinned
+`google/siglip2-so400m-patch16-384` (revision
+`dd658faac399427308559e2c3ac1e99cbe43845d`), native Transformers/PyTorch CUDA FP16.
+This supersedes the earlier request to leave the loading choice pending. It does not
+claim labelled library accuracy or automatically promote a primary backend index.
+
+See [laptop guide](laptop/README.md) for setup, lifecycle scripts, bearer authentication,
+model request format, exact fingerprint and LAN URLs. Separate `.venv-laptop` leaves the
+backend environment independent. `Start-PhotoSift.ps1` manages the model gateway on 8787
+and its owned loopback Ollama on 11435; `Stop-PhotoSift.ps1` stops only owned processes.
+The frontend remains unchanged. Zima services and the preparation pull agent are separate.
+
+D3's model is locally installed, but the SystemOne schema is still absent; the gateway
+reports it unconfigured and returns 501. No D3 decision protocol was invented. Backend
+dispatch to the new embedding gateway, labelled comparison, real-library backfill,
+primary promotion and Zima connectivity still require follow-up.
+
+Verification: pinned weights match upstream SHA-256. Actual CUDA matrix execution and
+live HTTP inference passed on RTX 5060 Laptop GPU using PyTorch 2.14.1+cu130 / Transformers
+5.22.1. Generated pixels plus three text prompts returned finite, L2-normalized 1152-D
+vectors with the same validated backend index fingerprint. Full pytest: **64 passed,
+1 skipped** (Windows symlink privilege); the latest five laptop tests also pass independently.
+Ruff, dependency checks and PowerShell syntax checks pass. Actual repeated start/stop
+and restart passed with the same fingerprint; existing shared Ollama was preserved.
+Live missing-token 401 and D3-unconfigured 501 checks passed. No library classification accuracy or
+sustained performance was measured. These results supersede the earlier statement that
+native image/text execution had not been tested; Zima job integration still is pending.

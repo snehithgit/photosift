@@ -9,12 +9,13 @@ requires-python = ">=3.12"
 dependencies = ["fastapi>=0.115,<1", "pydantic>=2,<3", "uvicorn>=0.30,<1", "pillow>=11,<13", "numpy>=2,<3"]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<10", "httpx>=0.27,<1"]
+test = ["pytest>=8,<10", "httpx>=0.27,<1", "psutil==7.2.2", "filelock==4.2.4"]
 dev = ["ruff>=0.17,<1"]
 agent = ["httpx>=0.27,<1", "opencv-python-headless>=4.10,<5"]
+laptop = ["transformers==5.22.1", "accelerate==1.15.0", "sentencepiece==0.2.2", "protobuf==7.36.2", "psutil==7.2.2", "filelock==4.2.4"]
 
 [tool.setuptools.packages.find]
-include = ["server*", "worker*", "agent*"]
+include = ["server*", "worker*", "agent*", "laptop*"]
 
 [tool.setuptools.package-data]
 server = ["migrations/*.sql"]

@@ -13,8 +13,9 @@ The canonical processing contract is now [02 Pipeline](02-pipeline.md). Separate
 ## Measurements and deployment checks
 
 ## Models
-- Owner direction (1 November 2026): keep the primary embedding choice pending. Comparison
-  infrastructure exists; actual checkpoint evaluation and selection have not happened.
+- Updated owner direction (1 November 2026): choose a loading default now. Selected
+  `google/siglip2-so400m-patch16-384` on the laptop; see [runtime guide](../laptop/README.md).
+  Labelled PhotoSift evaluation, backfill and explicit primary-index promotion remain pending.
 - A docs-wide check found no SystemOne payload fixture; only its endpoint/model tag and an
   explicit unknown-schema requirement. Do not infer a standard Ollama or llama.cpp protocol.
 - [ ] **`/v1/systemone` decision protocol:** the exact request/response schema and
