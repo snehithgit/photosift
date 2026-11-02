@@ -309,5 +309,23 @@ using 5.3 GB of 8 GB. Of 24 generated fake IDs, cards and records, 20 scored sen
 Unknown and none was cleared; the lowest score was 0.14. None of 34 plain generated images was
 flagged. On a read-only pass over the owner's 15 real photos, 6 webcam shots came back as people and
 worth keeping, and the screenshots as not sensitive, with one held on importance and one on people.
-These images say little about real IDs. Full pytest: **119 passed, 1 skipped**.
+These images say little about real IDs. Full pytest at that point: 119 passed, 1 skipped.
+
+## 13. Running from Zima and the web app
+
+The image is built by GitHub Actions and runs on ZimaOS, with the GPU laptop pulling work over the
+LAN. The agent downloads each original over its lease and checks the hash, so no share is needed.
+Teach labels add up across rounds. Settings has a folder picker and Clear database, and a library
+is scanned only when the owner clicks Scan now.
+
+Settings, Laptop agent has Turn on models and Encode prompts. They queue a fixed request in
+`agent_commands` (migration `011`, `server/commands.py`) that the agent pulls every few seconds, so
+Zima still never calls the laptop. A claim now also honours Pause, because configuring a model can
+queue work after a pause. `laptop/control.py` is a small Start/Stop window, and
+`Add-PhotoSiftShortcut.ps1` puts it on the desktop. Nothing runs at Windows startup.
+
+Tried on a scratch server with the real models: both buttons worked and 6 photos went through every
+stage. Start in the window was clicked with services already running. Stop and a start from
+stopped were not run through the window, because the laptop was in use. Full pytest: see
+`CLAUDE_HANDOFF.md`.
 

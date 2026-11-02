@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import psutil
 from fastapi.testclient import TestClient
 
-from laptop import services
+from laptop import control, services
 from laptop.app import create_app
 from laptop.config import Settings
 from laptop.engine import Encoder
@@ -140,6 +140,51 @@ def free_port():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+def test_window_reports_stopped_services_and_changes_nothing(tmp_path, monkeypatch):
+    isolate_services(tmp_path, monkeypatch)
+    shown = control.snapshot()
+    assert shown["SigLIP 2"] == shown["D3 Nano"] == "Stopped"
+    assert shown["Agent"].startswith(("Stopped", "Not set up"))
+    assert shown["Zima"].startswith("Not set up")
+    assert not services.STATE.exists()
+
+
+def test_window_shows_the_agents_last_line_and_a_bad_address(tmp_path, monkeypatch):
+    isolate_services(tmp_path, monkeypatch)
+    services.AGENT_CONFIG.write_text(
+        json.dumps({"serverUrl": f"http://127.0.0.1:{free_port()}/"})
+    )
+    (tmp_path / "agent.log").write_text("first\nEmbedding ready\n\n")
+    shown = control.snapshot()
+    assert shown["Last message"] == "Embedding ready"
+    assert shown["Zima"].startswith("Can't reach http://127.0.0.1:")
+
+
+def test_window_passes_start_and_stop_to_the_services(tmp_path, monkeypatch):
+    isolate_services(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command[1:])
+        kwargs["stdout"].write(b"Install Ollama first\n")
+        return SimpleNamespace(returncode=returns.pop(0))
+
+    returns = [0, services.NOT_RUNNING, 1, 0]
+    monkeypatch.setattr(control.subprocess, "run", fake_run)
+    assert control.run_services("start") == "Started."
+    assert "isn't ready" in control.run_services("start")
+    assert control.run_services("start") == "Install Ollama first"
+    assert control.run_services("stop").startswith("Stopped")
+    assert calls[-1] == ["-m", "laptop.services", "stop"]
+
+
+def test_nothing_is_set_to_run_at_windows_startup():
+    for name in ("Add-PhotoSiftShortcut.ps1", "Setup-Laptop.ps1"):
+        script = (services.PROJECT / name).read_text(encoding="utf-8").lower()
+        for startup in ("startup", "schtasks", "scheduledtask", "currentversion\\run"):
+            assert startup not in script
 
 
 def test_status_exit_code_says_stopped(tmp_path, monkeypatch, capsys):

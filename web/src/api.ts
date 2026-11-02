@@ -51,6 +51,8 @@ export interface DuplicateSet { id: string; kind: 'exact' | 'burst' | 'possible'
 export interface Root { id: string; path: string; name: string; files: number; bytes: number; available?: boolean }
 export interface Stage { name: 'inventory' | 'prepare' | 'embed' | 'assess' | 'group'; done: number; total: number; ratePerMin: number | null; location: 'zima' | 'laptop'; state: string; counts: Record<string, number> }
 export interface Stages { items: Stage[]; scans: Array<{ id: string; root_id: string; folder: string; verify: number; state: string; started_at: string; finished_at: string | null; error: string | null; seen: number }>; control: { state: 'running' | 'paused' | 'cancelled' }; primaryIndex: string | null; indexes: Array<{ id: string; role: string; status: string }>; preparationConfigured: boolean; d3: { endpoint: string; schema: string; state: string } }
+export type LaptopCommandKind = 'turn-on-models' | 'encode-prompts';
+export interface LaptopCommand { id: string; kind: LaptopCommandKind; state: 'queued' | 'running' | 'done' | 'failed'; message: string | null }
 export interface Status { laptop: { state: 'online' | 'offline'; lastContact: string | null }; sources: Root[]; activeBulkJobs: number }
 export interface HistoryEntry { id: string; label: string; scope: string; created_at: string; count: number; undoable: number | boolean }
 export interface PlanRow { contentId: string; source: string; destination: string; size: number }
@@ -96,6 +98,8 @@ export const api = {
   splitEvent: (id: string, body: { expectedVersion: number; contentIds: string[]; name: string }) => request<PhotoEvent>(`/api/events/${id}/split`, { json: body }),
   duplicates: (query: PhotoQuery & { kind: 'exact' | 'similar' }, paging: Paging = {}) => request<{ items: DuplicateSet[]; total: number }>(`/api/duplicates${queryString({ ...query, ...paging })}`),
   stages: () => request<Stages>('/api/stages'),
+  laptopCommands: () => request<Record<LaptopCommandKind, LaptopCommand | null>>('/api/laptop/commands'),
+  askLaptop: (kind: LaptopCommandKind) => request<LaptopCommand>('/api/laptop/commands', { json: { kind } }),
   browse: (path: string | null) => request<{ path: string | null; parent: string | null; folders: Array<{ name: string; path: string }> }>(`/api/browse${queryString(path ? { path } : {})}`),
   clearDatabase: () => request<{ cleared: boolean; spaceReclaimed: boolean }>('/api/database/clear', { json: { confirm: 'CLEAR' } }),
   saveSample: (members: SampleMember[]) => request<SampleSummary>('/api/comparison/labels', { json: { members } }),

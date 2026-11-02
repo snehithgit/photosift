@@ -24,7 +24,13 @@ From the project root in PowerShell:
 .\Stop-PhotoSift.ps1
 ```
 
-Double-click `Start-PhotoSift.cmd` / `Stop-PhotoSift.cmd` for the same actions.
+Double-click `Start-PhotoSift.cmd` / `Stop-PhotoSift.cmd` for the same actions, or use the small
+window, which also shows the agent, both models, the connection to Zima and the agent's last
+message. `.\Add-PhotoSiftShortcut.ps1` puts it on the desktop as **PhotoSift Agent**, and
+`.\.venv-laptop\Scripts\pythonw -m laptop.control` opens it directly. Start runs the models and
+the agent, and Stop ends them and frees the GPU. Closing the window leaves them as they are.
+Nothing here runs at Windows startup; everything waits for you to click Start.
+
 Setup needs Python 3.12, NVIDIA drivers supporting CUDA 13.0, internet access and
 installed Ollama. It uses `.venv-laptop`, separately from the backend environment.
 PyTorch/torchvision are pinned to their CUDA 13.0 wheels from the official PyTorch

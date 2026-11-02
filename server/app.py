@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from server import (
     assessments,
     clear,
+    commands,
     embeddings,
     events,
     exports,
@@ -1028,6 +1029,26 @@ def create_app(db_path=None, *, agent_token=None):
     def claim(request: ClaimInput):
         with db.write() as c:
             return leases.claim(c, request)
+
+    @app.get("/api/laptop/commands")
+    def laptop_commands():
+        with db.read() as c:
+            return commands.latest(c)
+
+    @app.post("/api/laptop/commands")
+    def ask_laptop(request: commands.CommandRequest):
+        with db.write() as c:
+            return commands.ask(c, request.kind)
+
+    @app.post("/api/agent/commands/claim", dependencies=[Depends(agent)])
+    def claim_command():
+        with db.write() as c:
+            return commands.claim(c)
+
+    @app.post("/api/agent/commands/{identifier}/finish", dependencies=[Depends(agent)])
+    def finish_command(identifier: str, request: commands.CommandResult):
+        with db.write() as c:
+            return commands.finish(c, identifier, request)
 
     @app.post("/api/agent/jobs/{identifier}/renew", dependencies=[Depends(agent)])
     def renew(identifier: str, request: LeaseInput):

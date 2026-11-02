@@ -32,6 +32,11 @@ The token and photos travel over plain HTTP, so keep this on your trusted home n
 `--init-local` is only for a server on the same machine, so don't use it here. The rest of the
 setup is in the [agent guide](../../agent/README.md).
 
+Start the laptop with **Start** in the PhotoSift Agent window (see the
+[laptop guide](../../laptop/README.md)). Then, in the web app, click **Turn on models** under
+Settings, Laptop agent. A database with no model setup prepares nothing until you do. Later, click
+**Encode prompts** there.
+
 ## Not tested yet
 
 CI runs the tests on Linux and smoke-tests the image, but this has not run on a real ZimaOS machine.

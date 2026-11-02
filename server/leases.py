@@ -1,5 +1,6 @@
 """Durable dispatch primitives. No inference adapters or assumed D3 payloads."""
 
+import json
 import time
 
 from fastapi import HTTPException
@@ -14,6 +15,10 @@ def claim(c, request):
         "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
         (request.owner, time.time(), request.stage, request.fingerprint),
     )
+    # Pause also holds work queued after it, such as by turning on a model.
+    control = c.execute("SELECT value FROM settings WHERE section='analyze'").fetchone()
+    if control and json.loads(control[0])["state"] != "running":
+        return None
     row = c.execute(
         "SELECT * FROM stage_jobs WHERE stage=? AND fingerprint=? AND (state='queued' OR state='running' AND expires<?) ORDER BY id LIMIT 1",
         (request.stage, request.fingerprint, time.time()),

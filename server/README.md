@@ -55,7 +55,7 @@ Configure the laptop independently using [agent/README.md](../agent/README.md).
 
 No index is promoted by default. Photos stay Unclassified until the owner encodes prompts, labels
 a sample, reads the report, promotes and runs grouping; see the [agent guide](../agent/README.md).
-D3 Nano runs only after `--configure-assessment`. Its answers become evidence and holds, and never
+D3 Nano runs only after Turn on models (or `--configure-assessment`). Its answers become evidence and holds, and never
 a Keep or Clutter decision:
 
 | Axis | Yes at or above | No at or below | Between |

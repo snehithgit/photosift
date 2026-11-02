@@ -46,6 +46,7 @@ ERASED = (
 # The owner's setup, so nothing has to be taught or configured again. Labels and reports refer to
 # photos by content hash, so they still match the same photos after a rescan.
 KEPT = (
+    "agent_commands",
     "agent_contacts",
     "comparison_samples",
     "embedding_indexes",

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Download, Folder, Info, LoaderCircle, LockKeyhole, MapPin, Pause, Play, Plus, RefreshCw, Search, Shield, Sparkles, Star } from 'lucide-react';
-import { api, ApiError, fetchPhotos, refreshAll, rememberPhotos, useGroups, useRoots, useStages, useStatus, type DuplicateSet, type HistoryEntry, type InventoryFile, type PhotoQuery, type Plan, type ProtectionValue, type Root, type ScoringPage, type Stage } from './api';
+import { api, ApiError, fetchPhotos, refreshAll, rememberPhotos, useGroups, useRoots, useStages, useStatus, type DuplicateSet, type HistoryEntry, type InventoryFile, type LaptopCommandKind, type PhotoQuery, type Plan, type ProtectionValue, type Root, type ScoringPage, type Stage } from './api';
 import { ActionBar, EmptyState, PhotoTile, ReasonLine } from './components';
 import { deriveTrips, formatBytes, formatCount, groupLabel, GROUPS, mediaUrl, shortDate, type Decision, type DocumentType, type GroupId, type Photo, type PhotoEvent } from './domain';
 import { go } from './router';
@@ -549,6 +549,22 @@ const percent = (value: number) => `${Math.round(value * 100)}%`;
 const ofPhotos = (band: { photos: number; correct: number }) => band.photos ? `${band.correct} of ${formatCount(band.photos)} matched` : 'no photos';
 
 // The owner's steps from a filled index to groups. Every step waits for its button; none starts another.
+// The laptop pulls this request the way it pulls photos, so Zima never has to reach it.
+function LaptopAction({ kind, label }: { kind: LaptopCommandKind; label: string }) {
+  const request = useQuery({ queryKey: ['laptop-commands'], queryFn: api.laptopCommands, refetchInterval: (query) => (Object.values(query.state.data ?? {}).some((item) => item?.state === 'queued' || item?.state === 'running') ? 1500 : false) });
+  const [error, setError] = useState<string | null>(null);
+  const command = request.data?.[kind];
+  const waiting = command?.state === 'queued' || command?.state === 'running';
+  useEffect(() => { if (command?.state === 'done') void refreshAll(); }, [command?.id, command?.state]);
+  const ask = async () => {
+    setError(null);
+    try { await api.askLaptop(kind); } catch (failure) { setError(errorText(failure)); }
+    await refreshAll();
+  };
+  return <div className="test-line"><button type="button" className="secondary-button" disabled={waiting} onClick={() => { void ask(); }}>{waiting ? <LoaderCircle size={14} className="spin"/> : null} {label}</button>
+    {error ? <span className="warning-text">{error}</span> : waiting ? <span>Waiting for the laptop…</span> : command?.state === 'done' ? <span className="model-ok">{command.message}</span> : command?.state === 'failed' ? <span className="warning-text">{command.message}</span> : null}</div>;
+}
+
 function ComparisonRows() {
   const request = useQuery({ queryKey: ['comparison'], queryFn: api.comparison });
   const notify = usePhotoSift((state) => state.notify);
@@ -579,7 +595,7 @@ function ComparisonRows() {
     }
   });
   return <>
-    <div className="setting-row"><div><strong>Prompts</strong><span>{pack ? `${pack.version} · ${formatCount(pack.prompts)} prompts encoded under this index` : 'Not encoded yet. On the laptop, run: python -m agent --config agent.local.json --encode-prompts'}</span></div><span className={pack ? 'model-ok' : 'warning-text'}>{pack ? 'Ready' : 'Not ready'}</span></div>
+    <div className="setting-row"><div><strong>Prompts</strong><span>{pack ? `${pack.version} · ${formatCount(pack.prompts)} prompts encoded under this index` : 'Not encoded yet. The laptop encodes them for this index.'}</span></div>{pack ? <span className="model-ok">Ready</span> : <LaptopAction kind="encode-prompts" label="Encode prompts"/>}</div>
     <div className="setting-row"><div><strong>Your labels</strong><span>{sample ? `${formatCount(sample.members)} labels · ${formatCount(sample.train)} to choose cut-offs · ${formatCount(sample.test)} held out · ${formatCount(sample.groups)} separate moments` : 'None saved yet. Label a sample under Teach.'}</span></div>{sample ? <button type="button" className="secondary-button" disabled={busy || !pack} onClick={() => { void compare(); }}>Run comparison</button> : <button type="button" className="secondary-button" onClick={() => go('/teach')}>Teach</button>}</div>
     {report && <>
       <h3 className="settings-subhead">Latest comparison</h3>
@@ -682,13 +698,16 @@ export function SettingsScreen() {
     <h3 className="settings-subhead">Clear database</h3><ClearDatabase/></>;
   else if (section === 'laptop-agent') body = <><p>The laptop pulls work from Zima and can go offline at any time.</p>
     <div className="setting-row"><div><strong>Status</strong><span>{laptopOffline ? 'Offline · GPU stages are waiting' : `Online · last contact ${status.data?.laptop.lastContact ? new Date(status.data.laptop.lastContact).toLocaleTimeString() : 'just now'}`}</span></div><span className={laptopOffline ? 'warning-text' : 'model-ok'}>{laptopOffline ? 'Offline' : 'Online'}</span></div>
+    <div className="setting-row"><div><strong>Start and stop</strong><span>Open PhotoSift Agent from the laptop’s desktop. It starts only when you click Start, not with Windows.</span></div></div>
+    <div className="setting-row"><div><strong>Turn on models</strong><span>Uses the laptop’s exact models. Running it again with the same models changes nothing. If they changed, photos are processed again under the new ones and vectors aren’t mixed. A pause on Analyze still holds the work.</span></div><LaptopAction kind="turn-on-models" label="Turn on models"/></div>
+    <div className="setting-row"><div><strong>Encode prompts</strong><span>Needed once for each index, before a comparison. Encoding again keeps the saved vectors.</span></div><LaptopAction kind="encode-prompts" label="Encode prompts"/></div>
     <div className="setting-row"><div><strong>Access token</strong><span>Set the same PHOTOSIFT_AGENT_TOKEN on this server and on the laptop agent.</span></div></div>
-    <div className="setting-row"><div><strong>Path mapping</strong><span>Read-only library paths are set in agent.local.json on the laptop.</span></div></div>
+    <div className="setting-row"><div><strong>Photos</strong><span>The agent downloads each photo from this server and checks its hash, so the laptop needs no file share.</span></div></div>
     <div className="setting-row"><div><strong>Connection</strong><span>Checks when the agent last reported in.</span></div><TestButton label="Test connection"/></div></>;
   else if (section === 'models') body = <><p>Only one embedding index is primary. Switching builds a new index first; vectors are never mixed.</p>
-    {(stages.data?.indexes ?? []).length ? stages.data!.indexes.map((index) => <div className="setting-row" key={index.id}><div><strong>{index.id.slice(0, 12)}</strong><span>{index.role} · {index.status}</span></div>{index.role === 'primary' && <span className="model-ok">Primary</span>}</div>) : <div className="setting-row"><div><strong>No embedding index yet</strong><span>The laptop service is set up for SigLIP 2 so400m. Grouping starts once an index is registered, filled and promoted.</span></div><span className="warning-text">Not ready</span></div>}
+    {(stages.data?.indexes ?? []).length ? stages.data!.indexes.map((index) => <div className="setting-row" key={index.id}><div><strong>{index.id.slice(0, 12)}</strong><span>{index.role} · {index.status}</span></div>{index.role === 'primary' && <span className="model-ok">Primary</span>}</div>) : <div className="setting-row"><div><strong>No embedding index yet</strong><span>The laptop service is set up for SigLIP 2 so400m. Grouping starts once an index is registered, filled and promoted.</span></div><LaptopAction kind="turn-on-models" label="Turn on models"/></div>}
     <ComparisonRows/>
-    <div className="setting-row"><div><strong>D3 Nano</strong><span>Ollama · /v1/systemone · checks each photo for sensitive content, importance and people. Its answers are signals, not proof, and never decide Keep or Clutter.</span></div><span className={stages.data?.d3.state === 'configured' ? 'model-ok' : 'warning-text'}>{stages.data?.d3.state === 'configured' ? 'Configured' : 'Not configured yet'}</span></div></>;
+    <div className="setting-row"><div><strong>D3 Nano</strong><span>Ollama · /v1/systemone · checks each photo for sensitive content, importance and people. Its answers are signals, not proof, and never decide Keep or Clutter.</span></div>{stages.data?.d3.state === 'configured' ? <span className="model-ok">Configured</span> : <LaptopAction kind="turn-on-models" label="Turn on models"/>}</div></>;
   else if (section === 'categories-and-prompts') body = <><p>Each group is described by text prompts. Changing prompts rescores stored vectors; photos aren’t re-embedded. These are the starting prompts; they take effect when an index is scored.</p>
     {GROUPS.filter((group) => PROMPTS[group.id]).map((group) => <div className="setting-row prompt-row" key={group.id}><div><strong>{group.name}</strong><span>{PROMPTS[group.id]!.map((prompt) => `“${prompt}”`).join(' · ')}</span></div></div>)}</>;
   else if (section === 'thresholds') body = <><p>A photo needs a score above the High cut-off, and a clear margin, to be High confidence. Not used yet: scoring takes one pair of cut-offs from the comparison report under Models.</p>
@@ -751,7 +770,7 @@ export function SetupScreen() {
     <div className="setup-card">
       {step === 1 && <><Folder size={24}/><h2>Add a library</h2><FolderPicker selected={root} onSelect={setRoot}/>{rootError ? <p className="warning-text">{rootError}</p> : <p>{roots.data?.length ? `${formatCount(roots.data.length)} ${roots.data.length === 1 ? 'library' : 'libraries'} added · ${formatCount(totalFiles)} files read so far${scan && (scan.state === 'queued' || scan.state === 'running') ? ' · scanning…' : ''}. Nothing is read until you click Scan now in Library.` : 'PhotoSift reads this folder and never changes it. Mount it read-only if you can.'}</p>}</>}
       {step === 2 && <><Sparkles size={24}/><h2>Connect the laptop</h2><p>Start the PhotoSift agent on your laptop with the same PHOTOSIFT_AGENT_TOKEN as this server. Its settings are in agent.local.json.</p><p className={laptopOffline ? 'warning-text' : 'model-ok'}>{laptopOffline ? 'Waiting for the agent…' : 'Agent connected'}</p></>}
-      {step === 3 && <><Sparkles size={24}/><h2>Choose models</h2><p>The laptop service is set up for SigLIP 2 so400m. An index becomes primary only after it’s been filled and compared on your photos. {stages.data?.d3.state === 'configured' ? 'D3 Nano is configured.' : 'D3 Nano isn’t configured yet.'}</p><TestButton label="Test the laptop"/></>}
+      {step === 3 && <><Sparkles size={24}/><h2>Choose models</h2><p>The laptop service is set up for SigLIP 2 so400m. An index becomes primary only after it’s been filled and compared on your photos. {stages.data?.d3.state === 'configured' ? 'D3 Nano is configured.' : 'D3 Nano isn’t configured yet.'}</p><TestButton label="Test the laptop"/><LaptopAction kind="turn-on-models" label="Turn on models"/></>}
       {step === 4 && <><Shield size={24}/><h2>Protect folders</h2><p>Nothing inside these folders is ever suggested as clutter.</p>{candidates.length ? candidates.map((node) => <label className="setting-row" key={node.folder}><span>{node.folder}</span><input type="checkbox" checked={isProtected(node.folder)} onChange={(event) => { if (firstRoot) void protection.save({ ...protection.value, protectedFolders: event.target.checked ? [...protection.value.protectedFolders, { root: firstRoot.id, folder: node.folder }] : protection.value.protectedFolders.filter((item) => !(item.root === firstRoot.id && item.folder === node.folder)) }); }}/></label>) : <p>Folders appear here after the first scan finishes.</p>}</>}
       {step === 5 && <><Sparkles size={24}/><h2>Teach PhotoSift (optional)</h2><p>Label about 200 sample photos so confidence bands match your library.</p><button type="button" className="secondary-button" onClick={() => { void setup.save({ complete: true }).then(() => go('/teach')); }}>Start labelling</button></>}
     </div>

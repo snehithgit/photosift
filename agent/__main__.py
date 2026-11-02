@@ -152,12 +152,12 @@ def embedding_target(client, gateway, notes):
     active = active.json()
     if not active:
         notes.say(
-            "Embedding waiting: no index is active; run once with --configure-embedding"
+            "Embedding waiting: no index is active; click Turn on models under Settings, Laptop agent"
         )
         return None
     if active["fingerprint"] != fingerprint(index_config(health["indexConfig"])):
         notes.say(
-            "Embedding waiting: this laptop's model differs from the active index. Nothing is mixed; run with --configure-embedding to fill a new index"
+            "Embedding waiting: this laptop's model differs from the active index. Nothing is mixed; click Turn on models to fill a new index"
         )
         return None
     notes.say("Embedding ready: index " + active["indexId"])
@@ -176,16 +176,80 @@ def assessment_target(client, gateway, notes):
     active = active.json()
     if not active:
         notes.say(
-            "Assessment waiting: not active; run once with --configure-assessment"
+            "Assessment waiting: not active; click Turn on models under Settings, Laptop agent"
         )
         return None
     if active["config"] != contract(d3):
         notes.say(
-            "Assessment waiting: this laptop's D3 setup differs from the active one; run with --configure-assessment to assess again"
+            "Assessment waiting: this laptop's D3 setup differs from the active one; click Turn on models to assess again"
         )
         return None
     notes.say("Assessment ready")
     return active
+
+
+def encode_prompts(client, gateway):
+    notes = Notes()
+    target = embedding_target(client, gateway, notes)
+    if not target:
+        raise ValueError(notes.last)
+    response = client.post(
+        "/api/indexes/" + target["indexId"] + "/prompts",
+        json=prompt_pack(gateway, target),
+    )
+    response.raise_for_status()
+    saved = response.json()
+    outcome = "saved" if saved["created"] else "already saved; vectors kept"
+    return f"Prompt pack {saved['version']}: {saved['prompts']} prompts {outcome}"
+
+
+def turn_on_models(client, gateway, config):
+    """Activate this laptop's exact contracts. Repeating it with the same models changes nothing."""
+    # Ask the models first, so a model service that is down changes nothing on Zima.
+    health = gateway.health()
+    d3 = gateway.d3()
+
+    def configure(stage, body):
+        response = client.post(f"/api/pipeline/{stage}/configure", json=body)
+        response.raise_for_status()
+        return response.json()["queued"]
+
+    prepare = configure("preparation", config.model_dump())
+    embed = configure("embedding", index_config(health["indexConfig"]))
+    assess = configure("assessment", contract(d3))
+    return f"Preparation, SigLIP 2 and D3 Nano are on. Newly queued: {prepare:,} to prepare, {embed:,} to embed, {assess:,} to assess."
+
+
+def run_command(client, gateway, config):
+    """Do one request from the web app, if there is one. Its reason goes back to the web app."""
+    response = client.post("/api/agent/commands/claim")
+    if response.status_code == 404:
+        return (
+            False  # A server older than this agent; it can't have asked for anything.
+        )
+    response.raise_for_status()
+    command = response.json()
+    if not command:
+        return False
+    print("Web app asked for:", command["kind"], flush=True)
+    try:
+        if not gateway:
+            raise ValueError("agent.local.json has no embedding section")
+        if command["kind"] == "encode-prompts":
+            state, message = "done", encode_prompts(client, gateway)
+        elif command["kind"] == "turn-on-models":
+            state, message = "done", turn_on_models(client, gateway, config)
+        else:
+            raise ValueError("This agent doesn't know that request; update it")
+    except Exception as exc:
+        state, message = "failed", str(exc) or type(exc).__name__
+    print(message, flush=True)
+    response = client.post(
+        "/api/agent/commands/" + command["id"] + "/finish",
+        json={"state": state, "message": message[:1000]},
+    )
+    response.raise_for_status()
+    return True
 
 
 def resolve(config_path, value):
@@ -344,22 +408,14 @@ def main():
             )
             response.raise_for_status()
         if args.encode_prompts:
-            target = embedding_target(client, gateway, notes)
-            if not target:
-                parser.error("Prompts were not encoded; see the reason above")
-            response = client.post(
-                "/api/indexes/" + target["indexId"] + "/prompts",
-                json=prompt_pack(gateway, target),
-            )
-            response.raise_for_status()
-            saved = response.json()
-            print(
-                f"Prompt pack {saved['version']}: {saved['prompts']} prompts",
-                "saved" if saved["created"] else "already saved; vectors kept",
-                f"on index {saved['indexId']}",
-            )
+            try:
+                print(encode_prompts(client, gateway))
+            except (ValueError, Unavailable) as exc:
+                parser.error(f"Prompts were not encoded: {exc}")
             return
         digest = fingerprint(config.model_dump())
+        next_command = 0
+        server_down = False
 
         def claim_next(stage, stage_fingerprint):
             response = client.post(
@@ -375,7 +431,14 @@ def main():
 
         while True:
             try:
+                # Checked between photos, and not on every one of them.
+                if time.monotonic() >= next_command:
+                    next_command = time.monotonic() + 3
+                    run_command(client, gateway, config)
                 claim = claim_next("prepare", digest)
+                if server_down:
+                    print("Server reachable again", flush=True)
+                    server_down = False
                 if claim:
                     try:
                         execute(
@@ -417,6 +480,7 @@ def main():
             except httpx.HTTPError as exc:
                 if args.once:
                     raise
+                server_down = True
                 print(
                     "Server unavailable; accepted results remain on Zima:",
                     str(exc)[:200] or type(exc).__name__,

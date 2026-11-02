@@ -64,6 +64,19 @@ are an error, never a fallback. Detector errors or no configured detector remain
 zero detections do not imply no people or disposable content. Actual YuNet weights and face
 accuracy have not been validated on this library.
 
+## Requests from the web app
+
+Under Settings, Laptop agent, **Turn on models** and **Encode prompts** do the same as
+`--configure-preparation --configure-embedding --configure-assessment` and `--encode-prompts`,
+without a terminal. Zima can't reach the laptop, so the agent pulls these requests the way it pulls
+photos, every few seconds, and sends back the result or the reason it couldn't. Only these two
+fixed requests exist and they take no arguments. They're refused while the agent isn't connected,
+and one that isn't finished within 10 minutes expires instead of running later.
+
+Turn on models asks the model service first, so a service that's down changes nothing. With the
+same models, running it again changes nothing. With different models, it starts a new index and
+assesses again, and nothing is mixed. A pause on Analyze still holds any work it queues.
+
 ## Embedding jobs
 
 With an `embedding` section in the config, the same loop also fills an embedding index once

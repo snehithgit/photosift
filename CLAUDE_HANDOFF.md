@@ -133,7 +133,9 @@ Run from the repository root in PowerShell. Laptop setup is already completed he
 .\Stop-PhotoSift.ps1
 ```
 
-Double-click alternatives: `Start-PhotoSift.cmd`, `Stop-PhotoSift.cmd`.
+Double-click alternatives: `Start-PhotoSift.cmd`, `Stop-PhotoSift.cmd`, or the PhotoSift Agent
+window (`laptop/control.py`; `Add-PhotoSiftShortcut.ps1` makes its desktop shortcut). Nothing runs
+at Windows startup: the owner asked for that explicitly.
 Optional `Enable-PhotoSiftLAN.ps1` must be explicitly run as Administrator if needed;
 it permits port 8787 only on Private profile/local subnet. It has not been applied automatically.
 The launcher starts model services and, once `agent.local.json` exists, the pull agent. It does
@@ -161,7 +163,7 @@ git diff --exit-code -- web
 
 ## Verified results and limits
 
-- Latest full pytest: **119 passed, 1 skipped**. Skip: Windows symbolic-link privilege;
+- Latest full pytest: **146 passed, 1 skipped**. Skip: Windows symbolic-link privilege;
   separate Windows junction refusal passes. One Starlette/httpx deprecation warning remains.
 - Source immutability tests check source bytes/tree/mtime/mode. Preparation/copy tests used
   temporary fixture libraries, not the owner's real originals.
