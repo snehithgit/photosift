@@ -1,6 +1,7 @@
 """Validated per-image preparation acceptance; cache IO stays outside write locks."""
 
 import base64
+import functools
 import hashlib
 import io
 import json
@@ -34,7 +35,11 @@ def configure_preparation(c, config: PreparationConfig):
         "UPDATE stage_jobs SET state='skipped',token=NULL,expires=NULL,error='Preparation contract superseded' WHERE stage='prepare' AND fingerprint!=? AND state IN ('queued','running','paused')",
         (digest,),
     )
-    queued = 0
+    # Back to a contract used before: what the switch away set aside is owed again.
+    queued = c.execute(
+        "UPDATE stage_jobs SET state='queued',error=NULL WHERE stage='prepare' AND fingerprint=? AND state='skipped' AND error='Preparation contract superseded'",
+        (digest,),
+    ).rowcount
     for row in c.execute(
         "SELECT DISTINCT p.content_id FROM photos p JOIN file_instances f ON f.content_id=p.content_id WHERE f.state='available'"
     ).fetchall():
@@ -77,6 +82,28 @@ def configure_preparation(c, config: PreparationConfig):
             )
         bump(c)
     return {"fingerprint": digest, "queued": queued, "config": value}
+
+
+@functools.lru_cache(maxsize=1)
+def local_preparation():
+    """The contract this machine would prepare under, or None where OpenCV isn't installed."""
+    try:
+        from agent.prepare import configuration
+    except ImportError:
+        return None
+    return configuration()
+
+
+def preparation_runner(c):
+    """The worker beside this server prepares exactly when the active contract is its own."""
+    active = c.execute(
+        "SELECT fingerprint FROM stage_specs WHERE stage='prepare' AND active=1"
+    ).fetchone()
+    if not active:
+        return None
+    config = local_preparation()
+    here = config and fingerprint(config.model_dump()) == active[0]
+    return "server" if here else "laptop"
 
 
 def store_media(db, content_id, digest, result, config):
@@ -206,6 +233,17 @@ def submit_preparation(db, identifier, request):
                 else "not_checked",
             },
         ]
+        # Preparing a photo again must not lose D3's answers: that stage won't run for it again.
+        before = c.execute(
+            "SELECT evidence,sensitive,importance FROM photos WHERE content_id=?",
+            (request.sha256,),
+        ).fetchone()
+        assessed = [
+            row for row in json.loads(before["evidence"]) if row["source"] == "d3nano"
+        ]
+        if assessed and "unknown" not in (before["sensitive"], before["importance"]):
+            evidence = evidence[1:]
+        evidence += assessed
         c.execute(
             "UPDATE photos SET width=?,height=?,format=?,capture_date=?,capture_source=?,camera=?,gps=?,faces=?,evidence=?,triage='needs_review',review_version=review_version+1 WHERE content_id=?",
             (
@@ -223,6 +261,8 @@ def submit_preparation(db, identifier, request):
                 request.sha256,
             ),
         )
+        if assessed:
+            assessments.retriage(c, request.sha256)
         ack = {
             "accepted": True,
             "jobId": identifier,

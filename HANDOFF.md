@@ -329,3 +329,12 @@ stage. Start in the window was clicked with services already running. Stop and a
 stopped were not run through the window, because the laptop was in use. Full pytest: see
 `CLAUDE_HANDOFF.md`.
 
+Prepare can also run on Zima (`worker/preparer.py`, Settings, Prepare on Zima). The worker prepares
+exactly when the active contract is its own, so the contract alone decides who runs it. Zima's
+owner names start with `zima-` and never count as laptop contact. Preparing a photo again now keeps
+D3's answers. The base image pins an exact Python, because its version is in the contract.
+
+Laptop speed on the real library: about 115 photos a minute over the network. Known gap: an altered
+copy of a reviewed photo arrives as a new photo with no link to the original; only byte-identical
+copies are recognised. `suggest-neighbors` has no caller.
+

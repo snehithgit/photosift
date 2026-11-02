@@ -3,6 +3,8 @@
 !requirements.lock
 !server/
 !worker/
+!agent/__init__.py
+!agent/prepare.py
 !web/
 web/node_modules/
 web/dist/

@@ -75,7 +75,9 @@ and one that isn't finished within 10 minutes expires instead of running later.
 
 Turn on models asks the model service first, so a service that's down changes nothing. With the
 same models, running it again changes nothing. With different models, it starts a new index and
-assesses again, and nothing is mixed. A pause on Analyze still holds any work it queues.
+assesses again, and nothing is mixed. A pause on Analyze still holds any work it queues. If the
+owner chose **Prepare on Zima**, it leaves that as it is, and only `--configure-preparation` moves
+preparing back to the laptop.
 
 ## Embedding jobs
 

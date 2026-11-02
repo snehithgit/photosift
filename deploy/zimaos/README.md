@@ -37,6 +37,20 @@ Start the laptop with **Start** in the PhotoSift Agent window (see the
 Settings, Laptop agent. A database with no model setup prepares nothing until you do. Later, click
 **Encode prompts** there.
 
+## Prepare on Zima
+
+Preparing needs no GPU, and the photos are already on Zima. Click **Prepare on Zima** under
+Settings, Laptop agent, and the worker prepares them with direct read-only access to the library.
+The laptop then does only the embed and assess stages. Photos prepared on the laptop before the
+switch are prepared again, because the contract includes the machine's Python and platform; D3's
+answers and your decisions are kept.
+
+It uses up to 3 threads, at low priority, and always leaves a core free. Set
+`PHOTOSIFT_PREPARE_THREADS` on the `worker` service to change that. To go back to the laptop, run
+`--configure-preparation` from the [agent guide](../../agent/README.md). No change to this compose
+file is needed: the worker already mounts the library. Speed on a real ZimaOS machine isn't measured
+yet.
+
 ## Not tested yet
 
 CI runs the tests on Linux and smoke-tests the image, but this has not run on a real ZimaOS machine.

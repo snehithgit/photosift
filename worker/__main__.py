@@ -4,6 +4,7 @@ import time
 
 from server.db import Database
 from server.review import process_bulk, process_undo
+from worker import preparer
 from worker.exporter import process_export
 from worker.scanner import scan
 
@@ -40,6 +41,8 @@ def main():
     if args.hash_mib_per_second <= 0:
         parser.error("--hash-mib-per-second must be positive")
     db = Database(args.db)
+    if not args.once:
+        preparer.start(db)
     try:
         while True:
             worked = tick(db, args.hash_mib_per_second)

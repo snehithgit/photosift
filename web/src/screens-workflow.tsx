@@ -56,7 +56,7 @@ function ReviewedToggle({ hidden }: { hidden: number }) {
 
 const STAGE_NAMES: Record<Stage['name'], string> = { inventory: 'Inventory', prepare: 'Prepare', embed: 'Embed', assess: 'Assess (D3 Nano)', group: 'Group' };
 const STAGE_STATES: Record<string, { text: string; tone: string }> = {
-  done: { text: 'Done', tone: 'done' }, running: { text: 'Running', tone: 'running' }, waiting_laptop: { text: 'Waiting for laptop', tone: 'waiting' },
+  done: { text: 'Done', tone: 'done' }, running: { text: 'Running', tone: 'running' }, waiting: { text: 'Waiting', tone: 'waiting' }, waiting_laptop: { text: 'Waiting for laptop', tone: 'waiting' },
   model_unavailable: { text: 'Not configured yet', tone: 'waiting' }, paused: { text: 'Paused', tone: 'waiting' }, failed: { text: 'Failed', tone: 'waiting' },
 };
 
@@ -88,7 +88,7 @@ export function AnalyzeScreen() {
       <section className="panel-card model-card"><div className="panel-heading"><div><h2>Models</h2><p>Read-only here · change in Settings</p></div><Sparkles size={17}/></div>
         <div className="model-row"><span>Primary index</span><strong>{primaryIndex ? primaryIndex.slice(0, 12) : 'None promoted yet'}</strong><span className={primaryIndex ? 'model-ok' : 'warning-text'}>{primaryIndex ? 'Ready' : 'Not ready'}</span></div>
         <div className="model-row"><span>D3 Nano</span><strong>{stagesRequest.data?.d3.endpoint ?? '/v1/systemone'}</strong><span className={stagesRequest.data?.d3.state === 'configured' ? 'model-ok' : 'warning-text'}>{stagesRequest.data?.d3.state === 'configured' ? 'Configured' : 'Not configured yet'}</span></div>
-        <div className="model-row"><span>Preparation</span><strong>Laptop agent</strong><span className={stagesRequest.data?.preparationConfigured ? 'model-ok' : 'warning-text'}>{stagesRequest.data?.preparationConfigured ? 'Configured' : 'Not configured yet'}</span></div></section>
+        <div className="model-row"><span>Preparation</span><strong>{stagesRequest.data?.preparationRunner === 'server' ? 'Zima' : 'Laptop agent'}</strong><span className={stagesRequest.data?.preparationConfigured ? 'model-ok' : 'warning-text'}>{stagesRequest.data?.preparationConfigured ? 'Configured' : 'Not configured yet'}</span></div></section>
     </div>
     <section className="ready-review"><div className="panel-heading"><div><h2>Ready to review</h2><p>Groups you can review now, most clearable first.</p></div><button type="button" className="text-button" onClick={() => go('/review')}>All groups <ArrowRight size={14}/></button></div><div className="ready-chips">{ready.map((group) => <button type="button" key={group.id} className="ready-chip" onClick={() => go(groupPath(group.id))}><span>{group.name}</span><strong>{formatCount(group.undecided)}</strong><ArrowRight size={14}/></button>)}</div></section>
     {confirmCancel && <ConfirmDialog title="Cancel analysis?" body={<p>Finished results are kept. Unfinished work stops until you start again.</p>} confirm="Cancel analysis" danger onConfirm={() => { void control('cancel'); setConfirmCancel(false); }} onCancel={() => setConfirmCancel(false)}/>}
@@ -565,6 +565,21 @@ function LaptopAction({ kind, label }: { kind: LaptopCommandKind; label: string 
     {error ? <span className="warning-text">{error}</span> : waiting ? <span>Waiting for the laptop…</span> : command?.state === 'done' ? <span className="model-ok">{command.message}</span> : command?.state === 'failed' ? <span className="warning-text">{command.message}</span> : null}</div>;
 }
 
+function PrepareOnZima() {
+  const stages = useStages();
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const prepared = stages.data?.items.find((stage) => stage.name === 'prepare')?.done ?? 0;
+  if (stages.data?.preparationRunner === 'server') return <span className="model-ok">On Zima</span>;
+  const move = async () => {
+    setConfirming(false); setError(null);
+    try { await api.prepareHere(); } catch (failure) { setError(errorText(failure)); }
+    await refreshAll();
+  };
+  return <div className="test-line"><button type="button" className="secondary-button" onClick={() => setConfirming(true)}>Prepare on Zima</button>{error && <span className="warning-text">{error}</span>}
+    {confirming && <ConfirmDialog title="Prepare on Zima?" body={<p>{`Zima prepares photos from now on, and the laptop keeps only the GPU stages. The ${formatCount(prepared)} photos already prepared are prepared again on Zima. D3’s answers and your decisions are kept.`}</p>} confirm="Prepare on Zima" onConfirm={() => { void move(); }} onCancel={() => setConfirming(false)}/>}</div>;
+}
+
 function ComparisonRows() {
   const request = useQuery({ queryKey: ['comparison'], queryFn: api.comparison });
   const notify = usePhotoSift((state) => state.notify);
@@ -699,6 +714,7 @@ export function SettingsScreen() {
   else if (section === 'laptop-agent') body = <><p>The laptop pulls work from Zima and can go offline at any time.</p>
     <div className="setting-row"><div><strong>Status</strong><span>{laptopOffline ? 'Offline · GPU stages are waiting' : `Online · last contact ${status.data?.laptop.lastContact ? new Date(status.data.laptop.lastContact).toLocaleTimeString() : 'just now'}`}</span></div><span className={laptopOffline ? 'warning-text' : 'model-ok'}>{laptopOffline ? 'Offline' : 'Online'}</span></div>
     <div className="setting-row"><div><strong>Start and stop</strong><span>Open PhotoSift Agent from the laptop’s desktop. It starts only when you click Start, not with Windows.</span></div></div>
+    <div className="setting-row"><div><strong>Where photos are prepared</strong><span>Preparing needs no GPU. On Zima the photos are already there, so the laptop only has to do the GPU stages and can be off during preparing.</span></div><PrepareOnZima/></div>
     <div className="setting-row"><div><strong>Turn on models</strong><span>Uses the laptop’s exact models. Running it again with the same models changes nothing. If they changed, photos are processed again under the new ones and vectors aren’t mixed. A pause on Analyze still holds the work.</span></div><LaptopAction kind="turn-on-models" label="Turn on models"/></div>
     <div className="setting-row"><div><strong>Encode prompts</strong><span>Needed once for each index, before a comparison. Encoding again keeps the saved vectors.</span></div><LaptopAction kind="encode-prompts" label="Encode prompts"/></div>
     <div className="setting-row"><div><strong>Access token</strong><span>Set the same PHOTOSIFT_AGENT_TOKEN on this server and on the laptop agent.</span></div></div>

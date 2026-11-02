@@ -142,6 +142,14 @@ def evidence_row(label, verdict, value):
     }
 
 
+def retriage(c, content):
+    photo = detail(c, content)
+    c.execute(
+        "UPDATE photos SET triage=? WHERE content_id=?",
+        (triage(photo, photo["band"]), content),
+    )
+
+
 def accept(c, identifier, request):
     previous = c.execute(
         "SELECT * FROM stage_results WHERE job_id=?", (identifier,)
@@ -224,11 +232,7 @@ def accept(c, identifier, request):
             "UPDATE photos SET protection=json_insert(protection,'$[#]','faces') WHERE content_id=? AND NOT EXISTS(SELECT 1 FROM json_each(photos.protection) WHERE value='faces')",
             (request.sha256,),
         )
-    after = detail(c, request.sha256)
-    c.execute(
-        "UPDATE photos SET triage=? WHERE content_id=?",
-        (triage(after, after["band"]), request.sha256),
-    )
+    retriage(c, request.sha256)
     ack = {
         "accepted": True,
         "jobId": identifier,

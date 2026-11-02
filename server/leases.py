@@ -7,14 +7,23 @@ from fastapi import HTTPException
 
 from server.db import packed, uid
 
+# Zima's own workers. They must never make the laptop look online.
+LOCAL_OWNER = "zima-"
+
+
+def note_contact(c, owner, stage, fingerprint):
+    if owner.startswith(LOCAL_OWNER):
+        return
+    c.execute(
+        "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
+        (owner, time.time(), stage, fingerprint),
+    )
+
 
 def claim(c, request):
     if request.fingerprint.endswith(":unconfigured"):
         raise HTTPException(409, "Stage adapter is not configured for this fingerprint")
-    c.execute(
-        "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
-        (request.owner, time.time(), request.stage, request.fingerprint),
-    )
+    note_contact(c, request.owner, request.stage, request.fingerprint)
     # Pause also holds work queued after it, such as by turning on a model.
     control = c.execute("SELECT value FROM settings WHERE section='analyze'").fetchone()
     if control and json.loads(control[0])["state"] != "running":
@@ -44,10 +53,7 @@ def claim(c, request):
         "UPDATE stage_jobs SET source_instance=?,source_size=?,source_mtime_ns=? WHERE id=?",
         (source["id"], source["size"], source["mtime_ns"], row["id"]),
     )
-    c.execute(
-        "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
-        (request.owner, time.time(), request.stage, request.fingerprint),
-    )
+    note_contact(c, request.owner, request.stage, request.fingerprint)
     return dict(
         jobId=row["id"],
         stage=row["stage"],
@@ -81,10 +87,7 @@ def valid_lease(c, job_id, request):
 
 def renew(c, job_id, request):
     job = valid_lease(c, job_id, request)
-    c.execute(
-        "INSERT INTO agent_contacts VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET last_contact=excluded.last_contact,stage=excluded.stage,fingerprint=excluded.fingerprint",
-        (request.owner, time.time(), job["stage"], job["fingerprint"]),
-    )
+    note_contact(c, request.owner, job["stage"], job["fingerprint"])
     expiry = time.time() + 120
     c.execute("UPDATE stage_jobs SET expires=? WHERE id=?", (expiry, job_id))
     return {"expires": expiry}
@@ -98,6 +101,15 @@ def release(c, job_id, request):
         (request.reason, job_id),
     )
     return {"state": "queued"}
+
+
+def fail(c, job_id, request):
+    valid_lease(c, job_id, request)
+    c.execute(
+        "UPDATE stage_jobs SET state=?,error=?,expires=NULL WHERE id=?",
+        (request.state, request.reason, job_id),
+    )
+    return {"state": request.state}
 
 
 def submit(c, job_id, request):

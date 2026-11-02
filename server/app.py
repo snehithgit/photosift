@@ -614,6 +614,7 @@ def create_app(db_path=None, *, agent_token=None):
                     "SELECT 1 FROM stage_specs WHERE stage='prepare' AND active=1"
                 ).fetchone()
             )
+            runner = pipeline.preparation_runner(c)
             embed_configured = embeddings.active_index(c) is not None
             assess_configured = assessments.active_spec(c) is not None
             grouped = c.execute(
@@ -649,6 +650,9 @@ def create_app(db_path=None, *, agent_token=None):
                 if stage in ("prepare", "embed", "assess")
                 else "model_unavailable"
             )
+            here = stage == "prepare" and runner == "server"
+            if here and state == "waiting_laptop":
+                state = "waiting"
             if control["state"] in ("paused", "cancelled"):
                 state = "paused"
             if counts.get("failed"):
@@ -693,7 +697,7 @@ def create_app(db_path=None, *, agent_token=None):
                     "total": total,
                     "ratePerMin": None,
                     "location": "laptop"
-                    if stage in ("prepare", "embed", "assess")
+                    if stage in ("prepare", "embed", "assess") and not here
                     else "zima",
                     "state": state,
                     "counts": counts,
@@ -706,6 +710,7 @@ def create_app(db_path=None, *, agent_token=None):
             "primaryIndex": primary[0] if primary else None,
             "indexes": indexes,
             "preparationConfigured": prep_configured,
+            "preparationRunner": runner,
             "d3": {
                 "endpoint": "/v1/systemone",
                 "schema": "ollama-systemone",
@@ -1168,6 +1173,19 @@ def create_app(db_path=None, *, agent_token=None):
         with db.write() as c:
             return pipeline.configure_preparation(c, request)
 
+    @app.get("/api/pipeline/preparation")
+    def preparation_place():
+        with db.read() as c:
+            return {"runner": pipeline.preparation_runner(c)}
+
+    @app.post("/api/pipeline/preparation/run-here")
+    def prepare_here():
+        config = pipeline.local_preparation()
+        if not config:
+            raise HTTPException(503, "This server can't prepare photos itself")
+        with db.write() as c:
+            return pipeline.configure_preparation(c, config)
+
     @app.get("/api/pipeline/assessment")
     def active_assessment():
         with db.read() as c:
@@ -1194,12 +1212,7 @@ def create_app(db_path=None, *, agent_token=None):
     @app.post("/api/agent/jobs/{identifier}/fail", dependencies=[Depends(agent)])
     def fail_stage(identifier: str, request: FailureInput):
         with db.write() as c:
-            leases.valid_lease(c, identifier, request)
-            c.execute(
-                "UPDATE stage_jobs SET state=?,error=?,expires=NULL WHERE id=?",
-                (request.state, request.reason, identifier),
-            )
-        return {"state": request.state}
+            return leases.fail(c, identifier, request)
 
     @app.get("/api/photos/{content_id}/related")
     def related_photos(content_id: str, query: Annotated[PhotoQuery, Query()]):

@@ -214,10 +214,16 @@ def turn_on_models(client, gateway, config):
         response.raise_for_status()
         return response.json()["queued"]
 
-    prepare = configure("preparation", config.model_dump())
+    # Moving preparation to the server was the owner's choice; this button must not undo it.
+    place = client.get("/api/pipeline/preparation")
+    if place.status_code == 200 and place.json()["runner"] == "server":
+        prepare, done = 0, "SigLIP 2 and D3 Nano are on, and Zima prepares the photos."
+    else:
+        prepare = configure("preparation", config.model_dump())
+        done = "Preparation, SigLIP 2 and D3 Nano are on."
     embed = configure("embedding", index_config(health["indexConfig"]))
     assess = configure("assessment", contract(d3))
-    return f"Preparation, SigLIP 2 and D3 Nano are on. Newly queued: {prepare:,} to prepare, {embed:,} to embed, {assess:,} to assess."
+    return f"{done} Newly queued: {prepare:,} to prepare, {embed:,} to embed, {assess:,} to assess."
 
 
 def run_command(client, gateway, config):
