@@ -16,6 +16,9 @@ from server.db import bump, fingerprint, now, packed, uid
 from server.paths import checked_path
 from server.preparation_contract import PreparationConfig, PreparationResult
 
+# Longer than a digest record: a stored result this long still holds its images.
+SLIM_PAYLOAD = 200
+
 
 def configure_preparation(c, config: PreparationConfig):
     value = config.model_dump()
@@ -106,6 +109,30 @@ def preparation_runner(c):
     return "server" if here else "laptop"
 
 
+def slim_results(db, batch=50):
+    """Replace older results' whole thumbnail and preview with the digest new ones store. The
+    stored text is exactly what the digest covers, so a replay is still recognised. It is one
+    small batch at a time, so nothing waits long, and the freed room is reused by later writes.
+    Returns how many rows changed."""
+    with db.read() as c:
+        rows = c.execute(
+            "SELECT content_id,fingerprint,payload FROM stage_results WHERE stage='prepare' AND length(payload)>? LIMIT ?",
+            (SLIM_PAYLOAD, batch),
+        ).fetchall()
+    if rows:
+        with db.write() as c:
+            for row in rows:
+                c.execute(
+                    "UPDATE stage_results SET payload=? WHERE content_id=? AND stage='prepare' AND fingerprint=?",
+                    (
+                        packed({"sha256": hashlib.sha256(row[2].encode()).hexdigest()}),
+                        row[0],
+                        row[1],
+                    ),
+                )
+    return len(rows)
+
+
 def store_media(db, content_id, digest, result, config):
     records = []
     for kind, encoded, edge, max_bytes in [
@@ -155,7 +182,11 @@ def submit_preparation(db, identifier, request):
                 or accepted["token"] != request.token
                 or accepted["fingerprint"] != request.fingerprint
                 or accepted["content_id"] != request.sha256
-                or accepted["payload"] != packed(request.payload)
+                or accepted["payload"]
+                not in (
+                    embeddings.result_record(request.payload),
+                    packed(request.payload),
+                )
             ):
                 raise HTTPException(409, "Conflicting duplicate result")
             return json.loads(accepted["ack"])
@@ -277,7 +308,8 @@ def submit_preparation(db, identifier, request):
                 request.fingerprint,
                 identifier,
                 request.token,
-                packed(request.payload),
+                # The thumbnail and preview are in the cache; a digest recognises a replay.
+                embeddings.result_record(request.payload),
                 packed(ack),
                 now(),
             ),

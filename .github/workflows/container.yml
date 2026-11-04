@@ -72,6 +72,8 @@ jobs:
           docker run --rm photosift:test python -c "import hashlib, tempfile; from pathlib import Path; from PIL import Image; from agent.prepare import configuration, prepare; folder = Path(tempfile.mkdtemp()); Image.new('RGB', (64, 64), (9, 90, 180)).save(folder / 'a.jpg'); found = (folder / 'a.jpg').stat(); print(prepare(folder, {'relativePath': 'a.jpg', 'size': found.st_size, 'mtimeNs': found.st_mtime_ns, 'sha256': hashlib.sha256((folder / 'a.jpg').read_bytes()).hexdigest()}, configuration()).width, configuration().runtime)"
           curl -fs -X POST http://127.0.0.1:8000/api/pipeline/preparation/run-here | grep -q fingerprint
           curl -fs http://127.0.0.1:8000/api/pipeline/preparation | grep -q '"server"'
+          curl -fs -X POST http://127.0.0.1:8000/api/analyze/pause
+          curl -fs -X POST http://127.0.0.1:8000/api/database/compact | grep -q '"after"'
       - name: Show server log on failure
         if: failure()
         run: docker logs photosift || true

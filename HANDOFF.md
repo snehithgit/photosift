@@ -344,7 +344,12 @@ ignore failures of a replaced contract (migration `012`); Start again after Canc
 `/api/stages` skips the per-photo work when it covers the whole library. On that run, 13 of Zima's
 15 failures were `.jpg` files of 0 to 122 bytes, not photos.
 
-Known and not fixed: `stage_results` holds each prepare payload with its base64 thumbnail and
-preview, which duplicates the cache on disk. Prepare's total also counts jobs finished under an
-earlier contract, so it read 51,726 rather than about 47,833 after moving to Zima.
+`stage_results` no longer keeps prepare's base64 thumbnail and preview, which duplicated the cache:
+new rows hold a digest, and the worker slims older rows in small batches. Zima's database was
+9.28 GB before this. Settings, Libraries, Free disk space runs VACUUM, only while Analyze is paused,
+because it holds up every write. `SQLITE_TMPDIR=/data` keeps its temporary copy off the container's
+own disk.
+
+Known and not fixed: Prepare's total also counts jobs finished under an earlier contract, so it read
+51,726 rather than about 47,833 after moving to Zima. The owner chose to leave it.
 

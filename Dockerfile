@@ -11,7 +11,8 @@ RUN npx -y pnpm@11.25.0 run build
 # arrive by itself and stop preparation until the owner chooses again.
 FROM python:3.12.16-slim-bookworm
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PHOTOSIFT_DB=/data/photosift.sqlite3 PHOTOSIFT_BROWSE_ROOTS=/library
+# SQLITE_TMPDIR: freeing space builds a temporary copy; keep it on the disk with the database.
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PHOTOSIFT_DB=/data/photosift.sqlite3 PHOTOSIFT_BROWSE_ROOTS=/library SQLITE_TMPDIR=/data
 # Only what the server and worker import, at the versions the tests ran against.
 COPY pyproject.toml requirements.lock ./
 RUN python -c "import tomllib; project = tomllib.load(open('pyproject.toml', 'rb'))['project']; print('\n'.join(project['dependencies'] + project['optional-dependencies']['agent']))" > /tmp/runtime.txt \

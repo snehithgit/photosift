@@ -99,6 +99,8 @@ export const api = {
   splitEvent: (id: string, body: { expectedVersion: number; contentIds: string[]; name: string }) => request<PhotoEvent>(`/api/events/${id}/split`, { json: body }),
   duplicates: (query: PhotoQuery & { kind: 'exact' | 'similar' }, paging: Paging = {}) => request<{ items: DuplicateSet[]; total: number }>(`/api/duplicates${queryString({ ...query, ...paging })}`),
   stages: () => request<Stages>('/api/stages'),
+  databaseSpace: () => request<{ bytes: number; freeBytes: number; slimming: boolean }>('/api/database/space'),
+  compactDatabase: () => request<{ before: number; after: number }>('/api/database/compact', { json: {} }),
   failedJobs: () => request<{ items: FailedJob[]; total: number }>(`/api/pipeline/jobs${queryString({ state: 'failed', limit: 100 })}`),
   prepareHere: () => request<{ fingerprint: string; queued: number }>('/api/pipeline/preparation/run-here', { json: {} }),
   laptopCommands: () => request<Record<LaptopCommandKind, LaptopCommand | null>>('/api/laptop/commands'),

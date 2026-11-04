@@ -37,6 +37,12 @@ Start the laptop with **Start** in the PhotoSift Agent window (see the
 Settings, Laptop agent. A database with no model setup prepares nothing until you do. Later, click
 **Encode prompts** there.
 
+## Disk space
+
+Thumbnails and previews live in the cache folder. Settings, Libraries shows the database's size and
+how much room inside it is free. **Free disk space** gives that room back to the disk. Pause Analyze
+first; it needs some free disk space while it runs, and it changes no photos or results.
+
 ## Prepare on Zima
 
 Preparing needs no GPU, and the photos are already on Zima. Click **Prepare on Zima** under

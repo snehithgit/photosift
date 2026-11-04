@@ -163,7 +163,7 @@ git diff --exit-code -- web
 
 ## Verified results and limits
 
-- Latest full pytest: **174 passed, 1 skipped**. Skip: Windows symbolic-link privilege;
+- Latest full pytest: **183 passed, 1 skipped**. Skip: Windows symbolic-link privilege;
   separate Windows junction refusal passes. One Starlette/httpx deprecation warning remains.
 - Source immutability tests check source bytes/tree/mtime/mode. Preparation/copy tests used
   temporary fixture libraries, not the owner's real originals.

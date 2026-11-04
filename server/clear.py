@@ -1,11 +1,13 @@
 """Start the library over. Originals, exported copies and the owner's setup are never touched."""
 
+import json
 import shutil
 import sqlite3
 
 from fastapi import HTTPException
 
 from server.db import bump
+from server.pipeline import SLIM_PAYLOAD
 
 # What the library holds now: rebuilt by the next scan and the laptop.
 ERASED = (
@@ -74,11 +76,65 @@ BUSY = (
 )
 
 
+def refuse_while_busy(c):
+    for query, message in BUSY:
+        if c.execute(query).fetchone():
+            raise HTTPException(409, message)
+
+
+def size_on_disk(db):
+    files = (db.path, db.path.with_name(db.path.name + "-wal"))
+    return sum(path.stat().st_size for path in files if path.exists())
+
+
+def space(db):
+    with db.read() as c:
+        page = c.execute("PRAGMA page_size").fetchone()[0]
+        free = c.execute("PRAGMA freelist_count").fetchone()[0]
+        slimming = c.execute(
+            "SELECT 1 FROM stage_results WHERE stage='prepare' AND length(payload)>? LIMIT 1",
+            (SLIM_PAYLOAD,),
+        ).fetchone()
+    return {
+        "bytes": size_on_disk(db),
+        "freeBytes": free * page,
+        "slimming": bool(slimming),
+    }
+
+
+def compact(db):
+    """Give room inside the database back to the disk. Nothing in it changes. It holds up every
+    write while it runs, so it waits for a pause: a laptop result refused partway could fail a
+    good photo."""
+    with db.read() as c:
+        control = c.execute(
+            "SELECT value FROM settings WHERE section='analyze'"
+        ).fetchone()
+        if not control or json.loads(control[0])["state"] == "running":
+            raise HTTPException(409, "Pause Analyze first, then try again")
+        refuse_while_busy(c)
+    if space(db)["slimming"]:
+        raise HTTPException(
+            409,
+            "Duplicate thumbnails are still being removed; try again when that finishes",
+        )
+    before = size_on_disk(db)
+    connection = db.connect()
+    try:
+        connection.execute("VACUUM")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            409, f"Couldn't free the space, and nothing was changed: {exc}"
+        ) from exc
+    finally:
+        connection.close()
+    return {"before": before, "after": size_on_disk(db)}
+
+
 def clear(db):
     with db.write() as c:
-        for query, message in BUSY:
-            if c.execute(query).fetchone():
-                raise HTTPException(409, message)
+        refuse_while_busy(c)
         c.execute("PRAGMA defer_foreign_keys=ON")
         for table in ERASED:
             c.execute(f"DELETE FROM {table}")

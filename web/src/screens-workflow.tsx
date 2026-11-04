@@ -652,6 +652,25 @@ function useServerSetting<T>(section: string, fallback: T) {
   return { value: request.data?.value ?? fallback, save, loaded: request.isSuccess };
 }
 
+function FreeDiskSpace() {
+  const request = useQuery({ queryKey: ['database-space'], queryFn: api.databaseSpace, refetchInterval: 15000 });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const data = request.data;
+  const free = async () => {
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api.compactDatabase();
+      setMessage({ ok: true, text: `Done: ${formatBytes(result.before)} down to ${formatBytes(result.after)}. Click Resume on Analyze when you’re ready.` });
+    } catch (error) { setMessage({ ok: false, text: errorText(error) }); }
+    setBusy(false);
+    await refreshAll();
+  };
+  return <><div className="setting-row"><div><strong>Database size</strong><span>{data ? `${formatBytes(data.bytes)} · ${formatBytes(data.freeBytes)} can be given back to the disk${data.slimming ? ' · still removing duplicate thumbnails, so more to come' : ''}` : 'Checking…'}</span></div></div>
+    <div className="setting-row"><div><strong>Free disk space</strong><span>Pause Analyze first. This can take several minutes, and it needs some free disk space while it runs. Your photos, thumbnails, decisions and results stay as they are.</span></div><button type="button" className="secondary-button" disabled={busy || !data || data.slimming} onClick={() => { void free(); }}>{busy ? <LoaderCircle size={14} className="spin"/> : null} Free disk space</button></div>
+    {message && <p className={message.ok ? 'model-ok' : 'warning-text'}>{message.text}</p>}</>;
+}
+
 function ClearDatabase() {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
@@ -715,6 +734,7 @@ export function SettingsScreen() {
     <div className="setting-row"><div><strong>Scanning</strong><span>New or changed files are picked up when you click Scan now in Library.</span></div><button type="button" className="secondary-button" onClick={() => go('/setup')}>Add a library</button></div>
     <h3 className="settings-subhead">Protected folders</h3>{protection.value.protectedFolders.map((folder) => <div className="setting-row" key={`${folder.root}:${folder.folder}`}><div><strong>{rootName(folder.root)}/{folder.folder}</strong><span>No clutter suggestions inside</span></div><button type="button" className="quiet-action" onClick={() => { void protection.save({ ...protection.value, protectedFolders: protection.value.protectedFolders.filter((item) => item !== folder) }); }}>Remove</button></div>)}
     <form className="setting-row" onSubmit={(event) => { event.preventDefault(); const clean = newFolder.trim().replace(/^\/+|\/+$/g, ''); if (clean && firstRoot) void protection.save({ ...protection.value, protectedFolders: [...protection.value.protectedFolders, { root: firstRoot.id, folder: clean }] }); setNewFolder(''); }}><input aria-label="Folder to protect" placeholder={`Folder inside ${firstRoot?.name ?? 'your library'}, like Family/2019`} value={newFolder} onChange={(event) => setNewFolder(event.target.value)}/><button type="submit" className="secondary-button" disabled={!firstRoot}>Protect folder</button></form>
+    <h3 className="settings-subhead">Disk space</h3><FreeDiskSpace/>
     <h3 className="settings-subhead">Clear database</h3><ClearDatabase/></>;
   else if (section === 'laptop-agent') body = <><p>The laptop pulls work from Zima and can go offline at any time.</p>
     <div className="setting-row"><div><strong>Status</strong><span>{laptopOffline ? 'Offline · GPU stages are waiting' : `Online · last contact ${status.data?.laptop.lastContact ? new Date(status.data.laptop.lastContact).toLocaleTimeString() : 'just now'}`}</span></div><span className={laptopOffline ? 'warning-text' : 'model-ok'}>{laptopOffline ? 'Offline' : 'Online'}</span></div>

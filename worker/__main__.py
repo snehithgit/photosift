@@ -1,7 +1,9 @@
 import argparse
 import os
+import sqlite3
 import time
 
+from server import pipeline
 from server.db import Database
 from server.review import process_bulk, process_undo
 from worker import preparer
@@ -43,12 +45,18 @@ def main():
     db = Database(args.db)
     if not args.once:
         preparer.start(db)
+    slimming = True
     try:
         while True:
             worked = tick(db, args.hash_mib_per_second)
             if not worked:
                 if args.once:
                     break
+                if slimming:
+                    try:
+                        slimming = pipeline.slim_results(db) > 0
+                    except sqlite3.OperationalError:
+                        pass  # The database is busy; the next pass carries on.
                 time.sleep(1)
     except KeyboardInterrupt:
         pass

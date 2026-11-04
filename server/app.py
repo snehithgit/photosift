@@ -1155,6 +1155,14 @@ def create_app(db_path=None, *, agent_token=None):
     def clear_database(request: ClearInput):
         return clear.clear(db)
 
+    @app.get("/api/database/space")
+    def database_space():
+        return clear.space(db)
+
+    @app.post("/api/database/compact")
+    def compact_database():
+        return clear.compact(db)
+
     @app.post("/api/comparison/labels")
     def comparison_labels(request: embeddings.ComparisonSample):
         with db.write() as c:

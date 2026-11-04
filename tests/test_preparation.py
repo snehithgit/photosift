@@ -64,14 +64,13 @@ def test_real_decode_and_cache_per_image_ack_replay(prepared_workspace):
     with Image.open(io.BytesIO(cache.content)) as image:
         assert image.format == "WEBP" and max(image.size) <= 256
         assert not image.getexif()
-    with db.read() as c:
-        saved = c.execute(
-            "SELECT payload FROM stage_results WHERE job_id=?", (claim["jobId"],)
-        ).fetchone()[0]
-    import json
-
     body = {key: claim[key] for key in ("owner", "token", "attempt", "fingerprint")}
-    body.update({"sha256": claim["sha256"], "payload": json.loads(saved)})
+    body.update(
+        {
+            "sha256": claim["sha256"],
+            "payload": prepare(source, claim, config).model_dump(),
+        }
+    )
     assert (
         client.post("/api/agent/jobs/" + claim["jobId"] + "/result", json=body).json()
         == ack
