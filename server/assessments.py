@@ -106,7 +106,7 @@ def configure(c, config):
         (UNCONFIGURED,),
     )
     c.execute(
-        "UPDATE stage_jobs SET state='skipped',token=NULL,expires=NULL,error='Assessment contract superseded' WHERE stage='assess' AND fingerprint!=? AND state IN ('queued','running','paused')",
+        "UPDATE stage_jobs SET state='skipped',token=NULL,expires=NULL,error='Assessment contract superseded' WHERE stage='assess' AND fingerprint!=? AND state IN ('queued','running','paused','failed')",
         (digest,),
     )
     c.execute("UPDATE stage_specs SET active=0 WHERE stage='assess'")

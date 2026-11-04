@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 import cv2
 import numpy as np
 import PIL
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from server.paths import checked_path
 from server.preparation_contract import PreparationConfig, PreparationResult
@@ -44,12 +44,20 @@ def gps_value(exif):
         def degrees(values):
             return float(values[0]) + float(values[1]) / 60 + float(values[2]) / 3600
 
-        return {
-            "lat": degrees(gps[2]) * (-1 if gps[1] == "S" else 1),
-            "lon": degrees(gps[4]) * (-1 if gps[3] == "W" else 1),
-        }
-    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        lat = degrees(gps[2]) * (-1 if gps[1] == "S" else 1)
+        lon = degrees(gps[4]) * (-1 if gps[3] == "W" else 1)
+    except (
+        IndexError,
+        KeyError,
+        OverflowError,
+        TypeError,
+        ValueError,
+        ZeroDivisionError,
+    ):
         return None
+    # A camera with no fix can write 0/0, which reads as not-a-number. That isn't a location, and
+    # it must not cost the photo its preparation.
+    return {"lat": lat, "lon": lon} if abs(lat) <= 90 and abs(lon) <= 180 else None
 
 
 def read_verified(root, claim, max_bytes):
@@ -109,7 +117,13 @@ def prepare(root, claim, config: PreparationConfig, model_path=None, data=None):
         path, data = read_verified(root, claim, config.maxSourceBytes)
     else:
         path = PurePosixPath(claim["relativePath"])
-    with Image.open(io.BytesIO(data)) as original:
+    try:
+        opened = Image.open(io.BytesIO(data))
+    except UnidentifiedImageError:
+        raise ValueError(
+            f"Not a readable image ({len(data):,} bytes): damaged, or not really a photo"
+        ) from None
+    with opened as original:
         if original.width * original.height > config.maxPixels:
             raise ValueError("Image exceeds configured decode pixel bound")
         exif = original.getexif()
@@ -136,7 +150,7 @@ def prepare(root, claim, config: PreparationConfig, model_path=None, data=None):
                 except ValueError:
                     pass
         camera = (
-            " ".join(str(exif.get(tag, "")).strip() for tag in (271, 272)).strip()
+            " ".join(str(exif.get(tag, "")).strip() for tag in (271, 272)).strip()[:200]
             or None
         )
         gps = gps_value(exif)

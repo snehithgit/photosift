@@ -338,3 +338,13 @@ Laptop speed on the real library: about 115 photos a minute over the network. Kn
 copy of a reviewed photo arrives as a new photo with no link to the original; only byte-identical
 copies are recognised. `suggest-neighbors` has no caller.
 
+Fixed after the first real run on Zima: a GPS value of 0/0 no longer fails the photo; View under
+Failures now lists failed jobs (it only opened the scan's unreadable files); Retry and the counts
+ignore failures of a replaced contract (migration `012`); Start again after Cancel really restarts;
+`/api/stages` skips the per-photo work when it covers the whole library. On that run, 13 of Zima's
+15 failures were `.jpg` files of 0 to 122 bytes, not photos.
+
+Known and not fixed: `stage_results` holds each prepare payload with its base64 thumbnail and
+preview, which duplicates the cache on disk. Prepare's total also counts jobs finished under an
+earlier contract, so it read 51,726 rather than about 47,833 after moving to Zima.
+

@@ -32,7 +32,7 @@ def configure_preparation(c, config: PreparationConfig):
         (digest, packed(value), now()),
     )
     c.execute(
-        "UPDATE stage_jobs SET state='skipped',token=NULL,expires=NULL,error='Preparation contract superseded' WHERE stage='prepare' AND fingerprint!=? AND state IN ('queued','running','paused')",
+        "UPDATE stage_jobs SET state='skipped',token=NULL,expires=NULL,error='Preparation contract superseded' WHERE stage='prepare' AND fingerprint!=? AND state IN ('queued','running','paused','failed')",
         (digest,),
     )
     # Back to a contract used before: what the switch away set aside is owed again.

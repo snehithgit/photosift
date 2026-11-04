@@ -49,14 +49,14 @@ base AS (
 """
 
 
+CURRENT_PHOTO = (
+    "EXISTS(SELECT 1 FROM file_instances current WHERE current.content_id=b.content_id)"
+)
+
+
 def where(query: PhotoQuery):
     # Superseded content stays in history/results, but is no longer a current photo.
-    clauses, params = (
-        [
-            "EXISTS(SELECT 1 FROM file_instances current WHERE current.content_id=b.content_id)"
-        ],
-        [],
-    )
+    clauses, params = [CURRENT_PHOTO], []
     if query.root:
         clause = "EXISTS(SELECT 1 FROM file_instances f WHERE f.content_id=b.content_id AND f.root_id=?"
         params.append(query.root)

@@ -57,6 +57,7 @@ from server.paths import checked_path, clean_folder, overlap
 from server.preparation_contract import PreparationConfig
 from server.queries import (
     BASE,
+    CURRENT_PHOTO,
     detail,
     group_stats,
     list_photos,
@@ -584,8 +585,13 @@ def create_app(db_path=None, *, agent_token=None):
             condition, params = where(
                 query.model_copy(update={"decisions": "all", "reviewed": True})
             )
+            # Every open tab polls this. Across the whole library it needs none of the per-photo
+            # work in BASE, which took 3 seconds on 48,000 photos on an N150.
+            whole_library = condition == CURRENT_PHOTO
             stage_rows = c.execute(
-                BASE
+                "SELECT j.stage,j.state,COUNT(*) n FROM stage_jobs j WHERE EXISTS(SELECT 1 FROM file_instances current WHERE current.content_id=j.content_id) GROUP BY j.stage,j.state"
+                if whole_library
+                else BASE
                 + "SELECT j.stage,j.state,COUNT(*) n FROM stage_jobs j JOIN base b ON b.content_id=j.content_id WHERE "
                 + condition
                 + " GROUP BY j.stage,j.state",
@@ -617,13 +623,17 @@ def create_app(db_path=None, *, agent_token=None):
             runner = pipeline.preparation_runner(c)
             embed_configured = embeddings.active_index(c) is not None
             assess_configured = assessments.active_spec(c) is not None
-            grouped = c.execute(
-                BASE
-                + "SELECT COUNT(*) AS total,COALESCE(SUM(b.group_id!='unclassified'),0) AS done FROM base b WHERE "
-                + condition
-                + " AND b.decision='undecided'",
-                params,
-            ).fetchone()
+            grouped = (
+                c.execute(
+                    BASE
+                    + "SELECT COUNT(*) AS total,COALESCE(SUM(b.group_id!='unclassified'),0) AS done FROM base b WHERE "
+                    + condition
+                    + " AND b.decision='undecided'",
+                    params,
+                ).fetchone()
+                if primary
+                else None
+            )
             inventory_counts = {
                 r["state"]: r["n"]
                 for r in c.execute(
@@ -748,15 +758,17 @@ def create_app(db_path=None, *, agent_token=None):
                     "UPDATE scan_runs SET state='cancelled',token=NULL,expires=NULL WHERE state IN ('queued','running','paused')"
                 )
             elif operation == "resume":
+                # Also "Start again" after Cancel: what Cancel set aside is owed again.
                 c.execute(
-                    "UPDATE stage_jobs SET state='queued',error=NULL WHERE state='paused'"
+                    "UPDATE stage_jobs SET state='queued',error=NULL WHERE state='paused' OR state='skipped' AND error='Cancelled by owner' AND fingerprint IN (SELECT fingerprint FROM stage_specs WHERE active=1)"
                 )
                 c.execute(
-                    "UPDATE scan_runs SET state='queued',error=NULL WHERE state='paused'"
+                    "UPDATE scan_runs SET state='queued',error=NULL WHERE state='paused' OR state='cancelled' AND NOT EXISTS(SELECT 1 FROM scan_runs newer WHERE newer.root_id=scan_runs.root_id AND newer.started_at>scan_runs.started_at)"
                 )
             else:
+                # A job of a replaced contract can never be claimed, so it isn't retried.
                 c.execute(
-                    "UPDATE stage_jobs SET state='queued',error=NULL,token=NULL,expires=NULL WHERE state='failed'"
+                    "UPDATE stage_jobs SET state='queued',error=NULL,token=NULL,expires=NULL WHERE state='failed' AND fingerprint IN (SELECT fingerprint FROM stage_specs WHERE active=1)"
                 )
                 failed_scans = c.execute(
                     "SELECT * FROM scan_runs s WHERE state IN ('partial','unavailable') AND NOT EXISTS(SELECT 1 FROM scan_runs newer WHERE newer.root_id=s.root_id AND newer.started_at>s.started_at) AND NOT EXISTS(SELECT 1 FROM scan_runs active WHERE active.root_id=s.root_id AND active.state IN ('queued','running','paused'))"
@@ -1280,7 +1292,7 @@ def create_app(db_path=None, *, agent_token=None):
             total = c.execute(BASE + "SELECT COUNT(*)" + source, params).fetchone()[0]
             rows = c.execute(
                 BASE
-                + "SELECT j.id,j.content_id AS contentId,j.stage,j.fingerprint,j.state,j.error,j.attempt,j.owner,j.expires"
+                + "SELECT j.id,j.content_id AS contentId,b.filename,b.size,j.stage,j.fingerprint,j.state,j.error,j.attempt,j.owner,j.expires"
                 + source
                 + " ORDER BY j.id LIMIT ? OFFSET ?",
                 [*params, limit, (page - 1) * limit],

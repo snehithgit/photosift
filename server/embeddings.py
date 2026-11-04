@@ -183,7 +183,7 @@ def configure(c, config):
     index = register(c, config)
     digest = index["fingerprint"]
     c.execute(
-        "UPDATE stage_jobs SET state='skipped',token=NULL,expires=NULL,error='Embedding contract superseded' WHERE stage='embed' AND fingerprint!=? AND state IN ('queued','running','paused') AND fingerprint IN (SELECT fingerprint FROM stage_specs WHERE stage='embed' AND active=1)",
+        "UPDATE stage_jobs SET state='skipped',token=NULL,expires=NULL,error='Embedding contract superseded' WHERE stage='embed' AND fingerprint!=? AND state IN ('queued','running','paused','failed') AND fingerprint IN (SELECT fingerprint FROM stage_specs WHERE stage='embed' AND active=1)",
         (digest,),
     )
     c.execute("UPDATE stage_specs SET active=0 WHERE stage='embed'")

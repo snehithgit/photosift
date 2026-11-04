@@ -1,0 +1,1 @@
+UPDATE stage_jobs SET state='skipped',error='Preparation contract superseded',token=NULL,expires=NULL WHERE stage='prepare' AND state='failed' AND EXISTS(SELECT 1 FROM stage_specs WHERE stage='prepare' AND active=1) AND fingerprint NOT IN (SELECT fingerprint FROM stage_specs WHERE stage='prepare' AND active=1);
