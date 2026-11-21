@@ -32,6 +32,14 @@ def test_removed_failed_original_leaves_counts_but_preserves_history(
     # A deletion is not inferred from a retry error: a complete scan must confirm it.
     assert failures(client)["total"] == 1
     scan(db, queue_scan(db, root))
+    assert (
+        client.get("/api/library/files", params={"state": "unreadable"}).json()["total"]
+        == 0
+    )
+    assert (
+        client.get("/api/library/files", params={"state": "missing"}).json()["total"]
+        == 1
+    )
     for scope in ({}, {"root": root}):
         assert failures(client, **scope)["total"] == 0
         stage = prepare_stage(client, **scope)
@@ -80,6 +88,10 @@ def test_a_remaining_exact_copy_is_still_an_active_failure(prepared_workspace):
     original.unlink()
     scan(db, queue_scan(db, root))
     assert failures(client)["total"] == 1
+    assert (
+        client.get("/api/library/files", params={"state": "unreadable"}).json()["total"]
+        == 1
+    )
     assert failures(client, root=root, folder="copies")["total"] == 1
     assert prepare_stage(client)["counts"]["failed"] == 1
     # A missing copy in one folder must not borrow availability from another folder.

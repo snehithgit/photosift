@@ -364,7 +364,7 @@ def create_app(db_path=None, *, agent_token=None):
             if query.state == "unreadable":
                 # A file can pass the scan and still fail to decode during preparation.
                 clauses.append(
-                    "(state='unreadable' OR EXISTS(SELECT 1 FROM stage_jobs j WHERE j.content_id=file_instances.content_id AND j.state='failed'))"
+                    "(state='unreadable' OR state='available' AND EXISTS(SELECT 1 FROM stage_jobs j WHERE j.content_id=file_instances.content_id AND j.state='failed'))"
                 )
             elif query.state:
                 clauses.append("state=?")

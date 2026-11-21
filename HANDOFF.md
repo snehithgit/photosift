@@ -361,6 +361,7 @@ A read-only incremental rescan was requested through the normal API. Its result 
 before claiming that all deleted paths are marked missing.
 
 Stage counts and the job list now require an available supported source in the requested root/folder;
+Library's Unreadable list also excludes missing paths with historical failed jobs.
 Retry also leaves failed jobs alone when no available copy remains. Missing file records, job errors,
 photo decisions and version history are retained. A remaining exact copy keeps the content active;
 restoring the file makes its retained failure visible and retryable again. Offline/partial scans
