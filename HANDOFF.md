@@ -357,8 +357,9 @@ Known and not fixed: Prepare's total also counts jobs finished under an earlier 
 
 The live Analyze page still showed 14 preparation failures after the owner deleted those originals.
 Each error was now file-not-found; the last completed inventory had not reconciled the removals.
-A read-only incremental rescan was requested through the normal API. Its result must be checked
-before claiming that all deleted paths are marked missing.
+A read-only incremental rescan completed through the normal API, with 52,599 seen paths and no
+traversal errors. It reconciled 272 missing paths in the existing inventory (not 272 failed
+contents; exact copies and unsupported files also have inventory paths).
 
 Stage counts and the job list now require an available supported source in the requested root/folder;
 Library's Unreadable list also excludes missing paths with historical failed jobs.
@@ -369,6 +370,12 @@ continue to preserve current availability. No migrations, frontend layout or sou
 
 Verification: 187 passed, 1 skipped (Windows symlink privilege); Ruff and formatting pass. New
 regressions cover confirmed removal, history retention, restoration, exact-copy scope boundaries,
-and offline/partial scans. Deployment of this fix to Zima and live post-rescan counts must be
-verified separately; a local passing test run does not mean the running container was updated.
+and offline/partial scans. GitHub's backend/frontend checks and container smoke/publish passed.
+Both Zima services were updated through the existing ZimaOS management UI to the verified image
+`ghcr.io/snehithgit/photosift:sha-39636ee`, preserving the volumes and read-only library mount.
+The live `/api/stages` reports Prepare done (51,706 / 51,706), `/api/pipeline/jobs?state=failed`
+reports zero, and Library Unreadable reports zero. The real Analyze page was refreshed and
+visually verified to say **No failures**; laptop D3 assessment resumed after the update.
+No source files were changed and no database/history records were deleted. Future external
+source removals still need a successful Library **Scan now**; this does not add a file watcher.
 
