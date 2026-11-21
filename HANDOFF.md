@@ -353,3 +353,21 @@ own disk.
 Known and not fixed: Prepare's total also counts jobs finished under an earlier contract, so it read
 51,726 rather than about 47,833 after moving to Zima. The owner chose to leave it.
 
+## 14. Removed originals and Analyze failures (22 November 2026)
+
+The live Analyze page still showed 14 preparation failures after the owner deleted those originals.
+Each error was now file-not-found; the last completed inventory had not reconciled the removals.
+A read-only incremental rescan was requested through the normal API. Its result must be checked
+before claiming that all deleted paths are marked missing.
+
+Stage counts and the job list now require an available supported source in the requested root/folder;
+Retry also leaves failed jobs alone when no available copy remains. Missing file records, job errors,
+photo decisions and version history are retained. A remaining exact copy keeps the content active;
+restoring the file makes its retained failure visible and retryable again. Offline/partial scans
+continue to preserve current availability. No migrations, frontend layout or source-file changes.
+
+Verification: 187 passed, 1 skipped (Windows symlink privilege); Ruff and formatting pass. New
+regressions cover confirmed removal, history retention, restoration, exact-copy scope boundaries,
+and offline/partial scans. Deployment of this fix to Zima and live post-rescan counts must be
+verified separately; a local passing test run does not mean the running container was updated.
+

@@ -58,6 +58,7 @@ from server.preparation_contract import PreparationConfig
 from server.queries import (
     BASE,
     CURRENT_PHOTO,
+    available_source,
     detail,
     group_stats,
     list_photos,
@@ -588,14 +589,21 @@ def create_app(db_path=None, *, agent_token=None):
             # Every open tab polls this. Across the whole library it needs none of the per-photo
             # work in BASE, which took 3 seconds on 48,000 photos on an N150.
             whole_library = condition == CURRENT_PHOTO
+            present, present_params = available_source(
+                query, "j.content_id" if whole_library else "b.content_id"
+            )
             stage_rows = c.execute(
-                "SELECT j.stage,j.state,COUNT(*) n FROM stage_jobs j WHERE EXISTS(SELECT 1 FROM file_instances current WHERE current.content_id=j.content_id) GROUP BY j.stage,j.state"
+                "SELECT j.stage,j.state,COUNT(*) n FROM stage_jobs j WHERE "
+                + present
+                + " GROUP BY j.stage,j.state"
                 if whole_library
                 else BASE
                 + "SELECT j.stage,j.state,COUNT(*) n FROM stage_jobs j JOIN base b ON b.content_id=j.content_id WHERE "
                 + condition
+                + " AND "
+                + present
                 + " GROUP BY j.stage,j.state",
-                params,
+                [*params, *present_params],
             ).fetchall()
             scans = [
                 dict(r)
@@ -768,7 +776,7 @@ def create_app(db_path=None, *, agent_token=None):
             else:
                 # A job of a replaced contract can never be claimed, so it isn't retried.
                 c.execute(
-                    "UPDATE stage_jobs SET state='queued',error=NULL,token=NULL,expires=NULL WHERE state='failed' AND fingerprint IN (SELECT fingerprint FROM stage_specs WHERE active=1)"
+                    "UPDATE stage_jobs SET state='queued',error=NULL,token=NULL,expires=NULL WHERE state='failed' AND fingerprint IN (SELECT fingerprint FROM stage_specs WHERE active=1) AND EXISTS(SELECT 1 FROM file_instances f WHERE f.content_id=stage_jobs.content_id AND f.state='available')"
                 )
                 failed_scans = c.execute(
                     "SELECT * FROM scan_runs s WHERE state IN ('partial','unavailable') AND NOT EXISTS(SELECT 1 FROM scan_runs newer WHERE newer.root_id=s.root_id AND newer.started_at>s.started_at) AND NOT EXISTS(SELECT 1 FROM scan_runs active WHERE active.root_id=s.root_id AND active.state IN ('queued','running','paused'))"
@@ -1287,6 +1295,9 @@ def create_app(db_path=None, *, agent_token=None):
         with db.read() as c:
             validate_scope(c, scope)
             condition, params = where(scope)
+            present, present_params = available_source(scope)
+            condition += " AND " + present
+            params.extend(present_params)
             if stage:
                 condition += " AND j.stage=?"
                 params.append(stage)

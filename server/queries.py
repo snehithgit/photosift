@@ -54,6 +54,21 @@ CURRENT_PHOTO = (
 )
 
 
+def available_source(query: PhotoQuery, content_id="b.content_id"):
+    """Analysis needs a present supported copy in its scope; history keeps missing paths."""
+    clauses = [f"f.content_id={content_id}", "f.state='available'"]
+    params = []
+    if query.root:
+        clauses.append("f.root_id=?")
+        params.append(query.root)
+        if query.folder:
+            clauses.append("substr(f.path,1,?)=?")
+            params.extend([len(query.folder) + 1, query.folder + "/"])
+    return "EXISTS(SELECT 1 FROM file_instances f WHERE " + " AND ".join(
+        clauses
+    ) + ")", params
+
+
 def where(query: PhotoQuery):
     # Superseded content stays in history/results, but is no longer a current photo.
     clauses, params = [CURRENT_PHOTO], []
