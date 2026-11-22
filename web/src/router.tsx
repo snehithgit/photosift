@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, seenPhoto, useGroups, useRoots, useStages, useStatus } from './api';
 import { formatCount, groupLabel } from './domain';
 import { usePhotoSift } from './store';
+import { parseSearch, stringifySearch } from './navigation';
 import { RootGroupScreen, OverviewScreen, GroupReviewScreen, FullGridScreen, PhotoDetailScreen } from './screens';
 import { LibraryScreen, AnalyzeScreen, DuplicatesScreen, EventsScreen, EventDetailScreen, DocumentsScreen, SearchScreen, TeachScreen, ExportScreen, HistoryScreen, SettingsScreen, SetupScreen, historyLabel, historyScope } from './screens-workflow';
 
@@ -120,6 +121,6 @@ const children = [
   route('/export/plan/$planId', ExportScreen), route('/export/run/$runId', ExportScreen), route('/history', HistoryScreen), route('/settings/$section', SettingsScreen),
 ];
 export const routeTree = (rootRoute as any).addChildren(children);
-router = createRouter({ routeTree } as any);
+router = createRouter({ routeTree, parseSearch, stringifySearch } as any);
 
 declare module '@tanstack/react-router' { interface Register { router: typeof router } }
