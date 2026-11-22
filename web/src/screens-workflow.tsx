@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Download, Folder, Info, LoaderCircle, LockKeyhole, MapPin, Pause, Play, Plus, RefreshCw, Search, Shield, Sparkles, Star } from 'lucide-react';
 import { api, ApiError, fetchPhotos, refreshAll, rememberPhotos, useGroups, useRoots, useStages, useStatus, type DuplicateSet, type HistoryEntry, type InventoryFile, type LaptopCommandKind, type PhotoQuery, type Plan, type ProtectionValue, type Root, type ScoringPage, type Stage } from './api';
+import { CategoryActions } from './category-actions';
 import { ActionBar, EmptyState, PhotoTile, ReasonLine } from './components';
 import { deriveTrips, formatBytes, formatCount, groupLabel, GROUPS, mediaUrl, shortDate, type Decision, type DocumentType, type GroupId, type Photo, type PhotoEvent } from './domain';
 import { go } from './router';
@@ -307,8 +308,9 @@ export function DocumentsScreen() {
   const tab = ((DOC_TABS as readonly string[]).includes(search.get('tab') ?? '') ? search.get('tab')! : 'Papers') as DocumentType;
   const [revealed, setRevealed] = useState(false);
   const [shown, setShown] = useState(60);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [showReviewed] = useShowReviewed();
-  useEffect(() => { setRevealed(false); setShown(60); }, [tab]);
+  useEffect(() => { setRevealed(false); setShown(60); setPicked(new Set()); }, [tab, showReviewed]);
   const docsRequest = useQuery({
     queryKey: ['documents', tab, showReviewed, shown],
     queryFn: async ({ signal }) => { const result = await fetchPhotos({ group: 'documents', documentType: tab, reviewed: showReviewed }, shown, signal); rememberPhotos(result.items); return result; },
@@ -327,7 +329,9 @@ export function DocumentsScreen() {
     <div className="tabs document-tabs" role="tablist">{DOC_TABS.map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? 'active' : ''} key={item} onClick={() => setQuery('/documents', 'tab', item)}>{item} ({formatCount(counts[item] ?? 0)}){item === 'IDs' && <LockKeyhole size={12}/>}</button>)}</div>
     {isIds && <div className="sensitive-notice"><LockKeyhole size={16}/><span>ID thumbnails are blurred. Export sends them only to <strong>Private/Sensitive/</strong>, never to the gallery folder.</span><button type="button" className="secondary-button" onClick={() => setRevealed((value) => !value)}>{revealed ? 'Blur again' : 'Reveal this view'}</button></div>}
     <div className="document-reason tab-row"><ReasonLine>document prompt score · flat lighting · page edges</ReasonLine><ReviewedToggle hidden={reviewedInTab}/></div>
-    {docs.length ? <div className="inventory-grid">{docs.slice(0, shown).map((photo) => <PhotoTile key={photo.contentId} photo={isIds && revealed ? { ...photo, sensitive: 'no' } : photo} onOpen={() => openDetail(photo, docs)}/>)}</div> : <EmptyState title={`No ${tab.toLowerCase()} yet`} body="Documents appear here once analysis sorts them."/>}
+    <div className="selection-controls"><button className="secondary-button" disabled={docsRequest.isFetching} onClick={() => setPicked(new Set(docs.slice(0, shown).map((photo) => photo.contentId)))}>Select displayed photos ({docs.length})</button><button className="text-button" onClick={() => setPicked(new Set())}>Clear selection</button></div>
+    <CategoryActions key={`${tab}:${showReviewed}`} photos={docs.filter((photo) => picked.has(photo.contentId))} disabled={docsRequest.isFetching} onDone={() => setPicked(new Set())}/>
+    {docs.length ? <div className="inventory-grid">{docs.slice(0, shown).map((photo) => <PhotoTile key={photo.contentId} photo={isIds && revealed ? { ...photo, sensitive: 'no' } : photo} gridMode selected={picked.has(photo.contentId)} onRange={() => setPicked((current) => { const next = new Set(current); if (next.has(photo.contentId)) next.delete(photo.contentId); else next.add(photo.contentId); return next; })} onOpen={() => openDetail(photo, docs)}/>)}</div> : <EmptyState title={`No ${tab.toLowerCase()} yet`} body="Documents appear here once analysis sorts them."/>}
     {shown < docsTotal && <div className="pagination"><span>Showing {formatCount(Math.min(shown, docs.length))} of {formatCount(docsTotal)}</span><button type="button" className="secondary-button" onClick={() => setShown(shown + 60)}>Show more</button></div>}
   </section>;
 }

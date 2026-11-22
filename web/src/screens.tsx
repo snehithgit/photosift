@@ -7,6 +7,7 @@ import { api, rememberPhotos, seenPhoto, useGroups, type PhotoQuery } from './ap
 import { ActionBar, BandChip, EmptyState, EvidenceRow, PhotoTile, ReasonLine } from './components';
 import { formatBytes, formatCount, groupLabel, GROUPS, mediaUrl, type Band, type Decision, type GroupId, type GroupStats, type Origin, type Photo } from './domain';
 import { go } from './router';
+import { CategoryActions } from './category-actions';
 import { usePhotoSift } from './store';
 import { getAutoAdvance, getThumbSize } from './theme';
 import { parseSearch } from './navigation';
@@ -71,13 +72,13 @@ function GroupRail({ current, groups, onSelect }: { current: GroupId; groups: Gr
   })}</aside>;
 }
 
-function ReviewSections({ inAction, sample, borderline, borderlineCount, protectedPhotos, protectedCount, excluded, selected, onToggle, onOpen, onShowAll, onShuffle }: {
+function ReviewSections({ inAction, sample, borderline, borderlineCount, protectedPhotos, protectedCount, selected, onToggle, onOpen, onShowAll, onShuffle }: {
   inAction: number; sample: Photo[]; borderline: Photo[]; borderlineCount: number; protectedPhotos: Photo[]; protectedCount: number; excluded: Set<string>; selected: Set<string>;
   onToggle: (photo: Photo) => void; onOpen: (photo: Photo, list: Photo[]) => void; onShowAll: (filter: string) => void; onShuffle: () => void;
 }) {
   const renderRow = (title: string, subtitle: string, rowPhotos: Photo[], filter: string, emptyTitle: string, count = rowPhotos.length) => <section className="photo-row-section" key={title}>
     <div className="row-heading"><div><h3>{title}</h3><span>{subtitle} · {formatCount(count)}</span></div><div className="row-actions">{title === 'Sample' && <button type="button" className="text-button" onClick={onShuffle}><RefreshCw size={13}/> Shuffle</button>}<button type="button" className="text-button" onClick={() => onShowAll(filter)}>Show all <ArrowRight size={14}/></button></div></div>
-    {rowPhotos.length ? <div className="photo-strip">{rowPhotos.slice(0, 12).map((photo) => <PhotoTile key={photo.contentId} photo={photo} excluded={excluded.has(photo.contentId)} selected={selected.has(photo.contentId)} onToggle={() => onToggle(photo)} onOpen={() => onOpen(photo, rowPhotos)}/>)}</div> : <div className="row-empty">{emptyTitle}</div>}
+    {rowPhotos.length ? <div className="photo-strip">{rowPhotos.slice(0, 12).map((photo) => <PhotoTile key={photo.contentId} photo={photo} gridMode selected={selected.has(photo.contentId)} onRange={() => onToggle(photo)} onOpen={() => onOpen(photo, rowPhotos)}/>)}</div> : <div className="row-empty">{emptyTitle}</div>}
   </section>;
   return <div className="review-sections">
     {renderRow('Sample', `random, across bands, from the ${formatCount(inAction)} this action covers`, sample, '', protectedCount ? `Only protected photos are left here (${formatCount(protectedCount)}). Review them one by one below, or tick “Include protected”.` : 'No photos match these filters.')}
@@ -125,7 +126,12 @@ export function GroupReviewScreen({ defaultGroup }: { defaultGroup?: string } = 
   const excludedIds = [...selection.exclusions].filter((id) => { const photo = seenPhoto(id); return photo && inActionScope(photo); });
   const exclusionsInScope = excludedIds.length;
   const actionCount = Math.max(0, eligibleCount - exclusionsInScope);
-  const selectedTiles = new Set([...sample, ...borderline, ...protectedPhotos].filter((photo) => inActionScope(photo) && !selection.exclusions.has(photo.contentId)).map((photo) => photo.contentId));
+  const visiblePhotos = [...new Map([...sample.slice(0, 12), ...borderline.slice(0, 12), ...protectedPhotos.slice(0, 12)].map((photo) => [photo.contentId, photo])).values()];
+  const selectedPhotos = visiblePhotos.filter((photo) => selection.manualSelection.has(photo.contentId));
+  const selectedTiles = new Set(selectedPhotos.map((photo) => photo.contentId));
+  const reviewScope = JSON.stringify(photoQuery);
+  useEffect(() => { selection.clearSelection(reviewScope, 'none'); }, [reviewScope]); // eslint-disable-line react-hooks/exhaustive-deps
+  const manualEligible = selectedPhotos.filter(inActionScope);
   const [clearDialog, setClearDialog] = useState<{ path: string; label: string } | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const changeScope = (target: string) => {
@@ -151,7 +157,7 @@ export function GroupReviewScreen({ defaultGroup }: { defaultGroup?: string } = 
     go(`/photo/${photo.contentId}?from=${encodeURIComponent(currentListUrl())}`);
   };
   useRestoreListScroll(true);
-  const doAction = (decision: Decision) => { void selection.applyBulk({ query: photoQuery, decision, exclusions: excludedIds, includeProtected: selection.includeProtected, expectedCount: actionCount }); };
+  const doAction = (decision: Decision) => { void selection.applyBulk({ query: photoQuery, decision, exclusions: selectedPhotos.length ? [] : excludedIds, contentIds: selectedPhotos.length ? manualEligible.map((photo) => photo.contentId) : undefined, includeProtected: selection.includeProtected, expectedCount: selectedPhotos.length ? manualEligible.length : actionCount }); };
   const minus = [!selection.includeProtected && protectedCount ? `${formatCount(protectedCount)} protected` : '', exclusionsInScope ? `${formatCount(exclusionsInScope)} you excluded` : ''].filter(Boolean);
   const actionSentence = `${formatCount(matchedCount)} undecided in ${group.name} (${formatBand(band)})${minus.length ? `, minus ${minus.join(' and ')}` : ''}${selection.includeProtected && protectedCount ? `, including ${formatCount(protectedCount)} protected` : ''}`;
   const hasBands = groupId !== 'unclassified';
@@ -166,12 +172,14 @@ export function GroupReviewScreen({ defaultGroup }: { defaultGroup?: string } = 
         <div className="filter-tools"><label className="sort-select"><SlidersHorizontal size={15}/><span className="sr-only">Sort photos</span><select aria-label="Sort photos" value={sort} onChange={(event) => setFilter('sort', event.target.value, 'default')}>{sortOptions.map((item, i) => <option key={item} value={['default', 'margin', 'date', 'size', 'name'][i]}>{item}</option>)}</select><ChevronDown size={13}/></label><button type="button" className={`filter-button ${filterOpen ? 'active' : ''}`} onClick={() => setFilterOpen((open) => !open)}><Filter size={15}/> Filter {Number(origin !== 'all') + Number(format !== 'all') + Number(Boolean(text)) + Number(protectedOnly) + Number(hasFaces) + Number(possibleDuplicate) > 0 && <span className="filter-count">{Number(origin !== 'all') + Number(format !== 'all') + Number(Boolean(text)) + Number(protectedOnly) + Number(hasFaces) + Number(possibleDuplicate)}</span>}</button></div>
       </div>
       {filterOpen && <div className="filter-panel"><label>Origin<select value={String(origin)} onChange={(event) => setFilter('origin', event.target.value, 'all')}><option value="all">Any origin</option>{['camera','screenshot','forwarded','downloaded','edited','unknown'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Format<select value={format} onChange={(event) => setFilter('format', event.target.value, 'all')}><option value="all">Any format</option>{['JPEG','PNG','TIFF','BMP','RAW','WEBP'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Search filenames<input value={searchInput} placeholder="Search this group" onChange={(event) => setSearchInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setFilter('q', event.currentTarget.value); }}/></label><label className="filter-check"><input type="checkbox" checked={protectedOnly} onChange={(event) => setFilter('protectedOnly', event.target.checked ? '1' : '', '')}/> Protected only</label><label className="filter-check"><input type="checkbox" checked={hasFaces} onChange={(event) => setFilter('faces', event.target.checked ? '1' : '', '')}/> Has faces</label><label className="filter-check"><input type="checkbox" checked={possibleDuplicate} onChange={(event) => setFilter('duplicate', event.target.checked ? '1' : '', '')}/> Possible duplicate</label></div>}
+      <div className="selection-controls"><button className="secondary-button" disabled={query.isFetching} onClick={() => selection.setManualSelection(visiblePhotos.map((photo) => photo.contentId))}>Select displayed photos ({visiblePhotos.length})</button><button className="text-button" onClick={() => selection.clearSelection(reviewScope, 'none')}>Clear selection</button><span>Click photos to select them; use i for details.</span></div>
+      <CategoryActions key={reviewScope} photos={selectedPhotos} disabled={query.isFetching} onDone={() => selection.clearSelection(reviewScope, 'none')}/>
       {query.isFetching && <div className="loading-line"><LoaderCircle size={14}/> Updating this view…</div>}
-      {group.all === 0 ? <EmptyState title={`No ${group.name.toLowerCase()} yet`} body="Photos appear here once analysis sorts them into this group."/> : group.undecided === 0 ? <EmptyState title={`All ${group.name.toLowerCase()} reviewed`} body="Everything in this group has a decision." action="View decided photos" onAction={() => go(`/review/group/${groupId}/all?decisions=all`)}/> : <ReviewSections inAction={eligibleCount} sample={sample} borderline={borderline} borderlineCount={review?.borderlineCount ?? 0} protectedPhotos={protectedPhotos} protectedCount={protectedCount} excluded={selection.exclusions} selected={selectedTiles} onToggle={(photo) => selection.setExclusion(photo.contentId)} onOpen={openPhoto} onShuffle={() => setSampleSeed((value) => value + 1)} onShowAll={(filter) => { const next = new URLSearchParams(window.location.search); new URLSearchParams(filter).forEach((value, key) => next.set(key, value)); go(`/review/group/${groupId}/all?${next}`); }}/>}
+      {group.all === 0 ? <EmptyState title={`No ${group.name.toLowerCase()} yet`} body="Photos appear here once analysis sorts them into this group."/> : group.undecided === 0 ? <EmptyState title={`All ${group.name.toLowerCase()} reviewed`} body="Everything in this group has a decision." action="View decided photos" onAction={() => go(`/review/group/${groupId}/all?decisions=all`)}/> : <ReviewSections inAction={eligibleCount} sample={sample} borderline={borderline} borderlineCount={review?.borderlineCount ?? 0} protectedPhotos={protectedPhotos} protectedCount={protectedCount} excluded={selection.exclusions} selected={selectedTiles} onToggle={(photo) => selection.toggleManualSelection(photo.contentId)} onOpen={openPhoto} onShuffle={() => setSampleSeed((value) => value + 1)} onShowAll={(filter) => { const next = new URLSearchParams(window.location.search); new URLSearchParams(filter).forEach((value, key) => next.set(key, value)); go(`/review/group/${groupId}/all?${next}`); }}/>}
       <div className="sample-footer"><button type="button" className="link-button" onClick={() => go('/duplicates')}><Layers3 size={15}/> Review duplicate sets</button><button type="button" className="link-button" onClick={() => go('/documents')}><Folder size={15}/> Browse documents</button><button type="button" className="link-button" onClick={() => go('/search')}><Search size={15}/> Search similar photos</button></div>
       <div className="mobile-bulk-hint">Use a larger screen for bulk actions.</div>
       <div className="desktop-action-spacer"/>
-      <ActionBar sentence={actionSentence} eligibleCount={actionCount} protectedCount={protectedCount} excludedCount={exclusionsInScope} includeProtected={selection.includeProtected} onIncludeProtected={() => selection.setIncludeProtected(!selection.includeProtected)} onAction={doAction} disabled={Boolean(job) || query.isFetching} personal={primaryPersonal}/>
+      <ActionBar sentence={selectedPhotos.length ? `${selectedPhotos.length} selected photos in ${group.name}` : actionSentence} eligibleCount={selectedPhotos.length ? manualEligible.length : actionCount} protectedCount={protectedCount} excludedCount={exclusionsInScope} includeProtected={selection.includeProtected} onIncludeProtected={() => selection.setIncludeProtected(!selection.includeProtected)} onAction={doAction} disabled={Boolean(job) || query.isFetching} personal={primaryPersonal}/>
     </div>
     {clearDialog && <div className="dialog-overlay"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="clear-title"><h2 id="clear-title">{clearDialog.label}</h2><p>Your selection belongs to the current group and filters. It won’t carry over to the new results.</p><div className="dialog-actions"><button className="quiet-action" onClick={() => setClearDialog(null)}>Keep current view</button><button className="primary-action" onClick={() => { selection.clearSelection(clearDialog.path); setClearDialog(null); go(clearDialog.path); }}>Clear exclusions and continue</button></div></div></div>}
   </div>;
@@ -266,13 +274,13 @@ export function FullGridScreen() {
     selection.clearSelection(`grid:${groupId}:${band}:${origin}`, 'none');
     // A new grid query starts with no visible-page selections.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupId]);
+  }, [groupId, band, origin, format, sortKey, protectedOnly, includeDecided, groupBy, page]);
   const isSelected = (photo: Photo) => mode === 'all' ? !exclusions.has(photo.contentId) && (includeProtectedValue || !photo.protected) : manual.has(photo.contentId);
   const addRange = (index: number) => {
     if (lastIndex.current !== null && Math.abs(lastIndex.current - index) > 0) {
       const from = Math.min(lastIndex.current, index);
       const to = Math.max(lastIndex.current, index);
-      const ids = layout.ordered.slice(from, to + 1).filter((photo) => includeProtectedValue || !photo.protected).map((photo) => photo.contentId);
+      const ids = layout.ordered.slice(from, to + 1).map((photo) => photo.contentId);
       selection.setManualSelection([...manual, ...ids]);
     } else selection.toggleManualSelection(layout.ordered[index]!.contentId);
     lastIndex.current = index;
@@ -294,7 +302,7 @@ export function FullGridScreen() {
   const selectedCount = mode === 'all' ? selectableCount : manualIds.length;
   const doBulk = (decision: Decision) => { void selection.applyBulk({ query: photoQuery, decision, exclusions: mode === 'all' ? gridExcludedIds : [], contentIds: mode === 'all' ? undefined : manualIds, includeProtected: includeProtectedValue, expectedCount: selectedCount }); };
   const handleClick = (photo: Photo, index: number, shift: boolean) => {
-    if (mode === 'all') selection.setExclusion(photo.contentId);
+    if (mode === 'all') selection.setManualSelection(pagePhotos.filter((item) => item.contentId !== photo.contentId && isSelected(item)).map((item) => item.contentId));
     else if (shift) addRange(index);
     else selection.toggleManualSelection(photo.contentId);
     lastIndex.current = index;
@@ -333,11 +341,11 @@ export function FullGridScreen() {
   };
   const setGroupBy = (value: string) => { const params = new URLSearchParams(window.location.search); if (value === 'none') params.delete('by'); else params.set('by', value); go(`/review/group/${groupId}/all${params.size ? `?${params}` : ''}`); };
   const handlePageSelection = () => {
-    const valid = pagePhotos.filter((photo) => includeProtectedValue || !photo.protected).map((photo) => photo.contentId);
+    const valid = pagePhotos.map((photo) => photo.contentId);
     if (mode === 'all') { selection.setSelectionMode('manual'); selection.setManualSelection(valid); }
-    else selection.setManualSelection([...new Set([...manual, ...valid])]);
+    else selection.setManualSelection(valid);
   };
-  const allLabel = mode === 'all' ? `${formatCount(selectedCount)} matching selected` : `${formatCount(selectedCount)} selected`;
+  const allLabel = mode === 'all' ? `${formatCount(selectedCount)} matching selected` : `${formatCount(manual.size)} selected`;
   const gridMinus = [!includeProtectedValue && gridProtected ? `${formatCount(gridProtected)} protected` : '', gridExcluded ? `${formatCount(gridExcluded)} you excluded` : ''].filter(Boolean);
   const gridSentence = mode === 'all'
     ? `all ${formatCount(matchCount)} matching in ${group.name}${gridMinus.length ? `, minus ${gridMinus.join(' and ')}` : ''}${includeProtectedValue && gridProtected ? `, including ${formatCount(gridProtected)} protected` : ''}`
@@ -345,6 +353,8 @@ export function FullGridScreen() {
   return <div className="grid-page">
     <div className="grid-page-heading"><button className="back-link" onClick={() => go(groupPath(groupId))}><ArrowLeft size={15}/> Back to {group.name}</button><h1>All {group.name}</h1><p className="muted-copy">{formatCount(matchCount)} matching photos · {allLabel}</p><ReasonLine>{group.reason}</ReasonLine></div>
     <div className="grid-controls"><div className="selection-controls"><button className="secondary-button" onClick={handlePageSelection}>Select page <span>{pagePhotos.length}</span></button><button className={`secondary-button ${mode === 'all' ? 'selected-control' : ''}`} onClick={() => { selection.selectAllMatching(); }}>Select all matching <span>{formatCount(selectableCount)}</span></button><button className="text-button" onClick={() => selection.clearSelection(`grid:${groupId}:${band}:${origin}`, 'none')}>Clear</button></div><div className="grid-filters"><label className="compact-select"><span>Band</span><select aria-label="Grid band" value={band} onChange={(event) => { const params = new URLSearchParams(window.location.search); if (event.target.value === 'all') params.delete('band'); else params.set('band', event.target.value); params.delete('page'); changeGridScope(`/review/group/${groupId}/all?${params}`); }}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label><label className="compact-select"><span>Origin</span><select aria-label="Grid origin" value={origin} onChange={(event) => { const params = new URLSearchParams(window.location.search); if (event.target.value === 'all') params.delete('origin'); else params.set('origin', event.target.value); params.delete('page'); changeGridScope(`/review/group/${groupId}/all?${params}`); }}><option value="all">Any</option>{['camera','screenshot','forwarded','downloaded','edited','unknown'].map((item) => <option key={item}>{item}</option>)}</select></label><label className="compact-select"><span>Group by</span><select aria-label="Group by" value={groupBy} onChange={(event) => setGroupBy(event.target.value)}><option value="none">None</option><option value="folder">Folder</option><option value="month">Month</option><option value="event">Event</option></select></label><div className="size-control" role="group" aria-label="Thumbnail size"><span>Thumbnails</span>{(['small', 'medium', 'large'] as const).map((size) => <button key={size} type="button" className={thumbSize === size ? 'active' : ''} aria-pressed={thumbSize === size} onClick={() => setThumbSize(size)} aria-label={`${size[0]!.toUpperCase()}${size.slice(1)} thumbnails`}>{size[0]!.toUpperCase()}</button>)}</div></div></div>
+    <CategoryActions key={JSON.stringify([photoQuery, page])} photos={mode === 'all' ? [] : pagePhotos.filter((photo) => manual.has(photo.contentId))} disabled={listing.isFetching} onDone={() => selection.clearSelection(undefined, 'none')}/>
+    {mode === 'all' && <p className="muted-copy">For category changes, choose Select page or clear selection and click individual photos.</p>}
     {gridProtected > 0 && <label className="include-protected include-grid"><input type="checkbox" checked={includeProtectedValue} onChange={() => selection.setIncludeProtected(!includeProtectedValue)}/> Include {formatCount(gridProtected)} protected <AlertTriangleIcon/></label>}
     <div ref={containerRef} className="virtual-scroll" role="region" aria-label={`${group.name} photo grid · arrow keys move between photos`} onKeyDown={onGridKey}>
       <div className="virtual-inner" style={{ height: `${virtualizer.getTotalSize()}px` }}>{virtualizer.getVirtualItems().map((virtualRow) => {

@@ -447,3 +447,23 @@ only results 241–360 are submitted and that no `limit=500` request occurs. Exc
 page/filter clearing, all five pages and the last-page count of 20 are covered. No backend,
 schema or stylesheet changes. Live verification is recorded after deployment.
 
+
+## 18. Click to select and recategorize (22 November 2026)
+
+Owner requested single/bulk category correction from every category workspace, keeping
+the i details button. Group review strips now use checked selection rather than Excluded.
+Select displayed photos includes only the tiles rendered in Sample/Borderline/Protected
+(deduplicated IDs); selecting a tile scopes review decisions to selected eligible photos.
+With no manual selection, the existing explicit whole-group review action remains available.
+A shared category picker supports single/bulk correction from review rows, full category grids
+and Documents tabs. Search retains its category controls and page-only selection from section 17.
+Full grids clear manual selection on page/filter changes; page selection includes protected
+photos for category correction, while review decisions still require the protection override.
+The separate Select all matching remains for review decisions; category corrections require
+Select page or manual selection, so unseen matching photos cannot be recategorized. Clicking
+a tile after Select all matching converts to visible-page manual selection. i/detail behavior,
+source files, backend, schema, and styles.css are unchanged. Frozen versioned category jobs
+reuse existing conflict checks and Undo.
+
+18 frontend tests pass, including a protected-document single/bulk correction regression and
+i-button navigation. TypeScript and production build pass. Live deployment verification follows.
