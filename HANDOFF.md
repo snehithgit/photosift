@@ -406,5 +406,11 @@ Older repeatedly quoted numeric flags are repaired during navigation without dec
 Local verification: 190 pytest passed, 1 skipped; 16 frontend tests passed; TypeScript and
 production build passed. New tests traverse all five result pages, edit a frozen 500-photo
 fixture, undo it, retain later edits, preserve source bytes/mtimes, and discard stale selections.
-Existing `styles.css` is unchanged. Deployment and live browser verification are recorded separately.
+Existing `styles.css` is unchanged. GitHub's tests and image smoke/publish passed; both Zima
+services now run `ghcr.io/snehithgit/photosift:sha-055af1d`. The live OpenAPI exposes the category
+job route and the production frontend has the new controls. Browser verification on the owner's
+exact search link traversed all five pages through 481–500, retained 500 selections, then cleared
+the temporary selection. No category changes were applied to the owner's photos. The actual bulk
+change, Undo and conflict behavior were exercised on generated fixtures only. A live screenshot
+of the controls is in ignored `.data/verification/search-pagination.jpg`.
 
