@@ -9,6 +9,7 @@ import { formatBytes, formatCount, groupLabel, GROUPS, mediaUrl, type Band, type
 import { go } from './router';
 import { usePhotoSift } from './store';
 import { getAutoAdvance, getThumbSize } from './theme';
+import { parseSearch } from './navigation';
 
 export const groupPath = (groupId: string) => `/review/group/${groupId}`;
 const isGroupId = (value: string): value is GroupId => GROUPS.some((group) => group.id === value);
@@ -16,7 +17,7 @@ const asGroupId = (value?: string): GroupId => value && isGroupId(value) ? value
 // Read the query string through the router so Back/Forward re-render the screen with the right filters.
 export function useUrlSearch(): URLSearchParams {
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-  return useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+  return useMemo(() => new URLSearchParams(parseSearch(searchStr)), [searchStr]);
 }
 const pageNumber = (search: URLSearchParams) => Math.max(1, Number(search.get('page') ?? 1) || 1);
 const bandFilter = (search: URLSearchParams): Band | 'all' => {

@@ -414,3 +414,15 @@ the temporary selection. No category changes were applied to the owner's photos.
 change, Undo and conflict behavior were exercised on generated fixtures only. A live screenshot
 of the controls is in ignored `.data/verification/search-pagination.jpg`.
 
+## 16. Initial quoted grid links (22 November 2026)
+
+The owner reported Documents-grid Next still showing the same photos from an older, repeatedly
+quoted `protectedOnly`/`page` URL. Section 15's router fix corrected generated links, but
+`useUrlSearch` still read `location.searchStr` directly on initial load. All screens now pass
+that shared reader through the same controlled numeric-flag normalization. Free-text search
+is preserved. A real RouterProvider/hook regression opens a repeatedly quoted page 2/protected
+link, verifies page 2 and protected=1, then Next=3 and Previous=2. No backend/schema/style changes.
+Live Documents-grid verification follows deployment; do not infer it from the earlier Search test.
+Local verification: 17 frontend tests, TypeScript and production build pass; the stylesheet
+and backend are unchanged.
+
