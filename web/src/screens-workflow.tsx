@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Download, Folder, Info, LoaderCircle, LockKeyhole, MapPin, Pause, Play, Plus, RefreshCw, Search, Shield, Sparkles, Star } from 'lucide-react';
@@ -337,6 +337,8 @@ export function DocumentsScreen() {
 const RECENT_KEY = 'photosift:recent-searches';
 export function SearchScreen() {
   const applyDecisions = usePhotoSift((state) => state.applyDecisions);
+  const movePhotos = usePhotoSift((state) => state.movePhotos);
+  const notify = usePhotoSift((state) => state.notify);
   const roots = useRoots();
   const search = useUrlSearch();
   const q = search.get('q') ?? '';
@@ -345,19 +347,33 @@ export function SearchScreen() {
   const [input, setInput] = useState(q);
   useEffect(() => setInput(q), [q]);
   const [recent, setRecent] = usePersistentState<string[]>(RECENT_KEY, []);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  useEffect(() => setSelected(new Set()), [q, search.get('like'), allLibraries]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [selected, setSelected] = useState<Map<string, Photo>>(new Map());
+  const [category, setCategory] = useState<GroupId | ''>('');
+  const [busy, setBusy] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [includeProtected, setIncludeProtected] = useState(false);
+  const selectRequest = useRef<AbortController | null>(null);
   const [showReviewed] = useShowReviewed();
   const scopeRoot = !allLibraries && roots.data?.length ? roots.data[0]!.id : undefined;
   const scope: PhotoQuery = { root: scopeRoot, reviewed: showReviewed };
+  const scopeKey = JSON.stringify([q, like[0] ?? '', scopeRoot, showReviewed, allLibraries]);
+  const context = useRef(scopeKey); context.current = scopeKey;
+  useEffect(() => {
+    setSelected(new Map()); setCategory(''); setIncludeProtected(false); setSelectingAll(false);
+    return () => { selectRequest.current?.abort(); };
+  }, [scopeKey]);
+  const pageNumber = Number(search.get('page') ?? '1');
+  const page = Number.isSafeInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
+  const pageSize = 120;
+  const similarMode = like.length > 0;
   const request = useQuery({
-    queryKey: ['search', q, like[0] ?? '', scopeRoot, showReviewed],
-    queryFn: async ({ signal }) => { const result = await api.search(like.length ? { ...scope, like: like[0] } : { ...scope, q }, { limit: 120 }, signal); rememberPhotos(result.items); return result; },
-    enabled: Boolean(q || like.length),
-    placeholderData: (previous) => previous,
+    queryKey: ['search', q, like[0] ?? '', scopeRoot, showReviewed, page],
+    queryFn: async ({ signal }) => { const result = await api.search(similarMode ? { ...scope, like: like[0] } : { ...scope, q }, { page, limit: pageSize }, signal); rememberPhotos(result.items); return result; },
+    enabled: Boolean(q || like.length) && (allLibraries || roots.isSuccess),
   });
   const results = q || like.length ? request.data?.items ?? [] : [];
-  const similarMode = like.length > 0;
+  const total = request.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
   const seed = useQuery({ queryKey: ['photo', like[0]], queryFn: () => api.photo(like[0]!), enabled: similarMode });
   const seedPhotos = seed.data ? [seed.data] : [];
   const submit = (value: string) => {
@@ -365,19 +381,57 @@ export function SearchScreen() {
     setRecent([clean.toLowerCase(), ...recent.filter((item) => item !== clean.toLowerCase())].slice(0, 6));
     const params = new URLSearchParams(); params.set('q', clean); if (allLibraries) params.set('scope', 'all'); go(`/search?${params}`);
   };
-  const selectedIds = [...selected];
-  const act = (decision: Decision) => { void applyDecisions(results.filter((photo) => selected.has(photo.contentId)).map((photo) => ({ photo, decision })), decision === 'clutter' ? 'Set aside' : decision === 'later' ? 'Review later' : 'Kept'); setSelected(new Set()); };
+  const selectedPhotos = [...selected.values()];
+  const selectedIds = [...selected.keys()];
+  const protectedCount = selectedPhotos.filter((photo) => photo.protected).length;
+  const eligiblePhotos = selectedPhotos.filter((photo) => includeProtected || !photo.protected);
+  const disabled = busy || selectingAll || request.isFetching;
+  const toggle = (photo: Photo) => {
+    if (disabled) return;
+    setSelected((current) => { const next = new Map(current); if (next.has(photo.contentId)) next.delete(photo.contentId); else if (next.size < 500) next.set(photo.contentId, photo); return next; });
+  };
+  const selectAll = async () => {
+    const controller = new AbortController(); selectRequest.current?.abort(); selectRequest.current = controller;
+    setSelectingAll(true);
+    try {
+      // Similarity is capped at 500 on the server. Fetch that bounded result set once;
+      // keep the rendered grid paged and freeze these exact IDs/versions for category edits.
+      const matches = similarMode ? await api.search({ ...scope, like: like[0] }, { page: 1, limit: 500 }, controller.signal) : { items: results };
+      if (!controller.signal.aborted) { rememberPhotos(matches.items); setSelected(new Map(matches.items.map((photo) => [photo.contentId, photo]))); }
+    } catch (error) { if (!controller.signal.aborted) notify({ message: 'Couldn’t select matches', detail: errorText(error) }); }
+    finally { if (selectRequest.current === controller) setSelectingAll(false); }
+  };
+  const changeCategory = async () => {
+    if (!category || !selected.size || busy) return;
+    const startedIn = scopeKey; setBusy(true);
+    try { if (await movePhotos(selectedPhotos, category) && context.current === startedIn) setSelected(new Map()); }
+    finally { setBusy(false); }
+  };
+  const act = async (decision: Decision) => {
+    const startedIn = scopeKey; setBusy(true);
+    try { await applyDecisions(eligiblePhotos.map((photo) => ({ photo, decision })), decision === 'clutter' ? 'Set aside' : decision === 'later' ? 'Review later' : 'Kept'); if (context.current === startedIn) setSelected(new Map()); }
+    finally { setBusy(false); }
+  };
+  const changeFilter = (key: string, value: string | null) => {
+    const params = new URLSearchParams(window.location.search); params.delete('page');
+    if (value === null) params.delete(key); else params.set(key, value);
+    go(`/search?${params}`);
+  };
   const unavailable = request.isError && similarMode;
+  const pagination = (results.length > 0 || total > 0) ? <div className="pagination" aria-label="Search result pages"><span>Showing {results.length ? formatCount((page - 1) * pageSize + 1) : 0}–{formatCount((page - 1) * pageSize + results.length)} of {formatCount(total)}{selected.size > 0 ? ` · ${formatCount(selected.size)} selected across pages` : ''}{request.data?.truncated ? ' · closest 500 matches' : ''}</span><div className="button-row"><button type="button" className="secondary-button" disabled={page <= 1 || request.isFetching} onClick={() => setQuery('/search', 'page', String(page - 1))}>Previous</button><span>Page {page} of {pages}</span><button type="button" className="secondary-button" disabled={page >= pages || request.isFetching} onClick={() => setQuery('/search', 'page', String(page + 1))}>Next</button></div></div> : null;
   return <section className="page-section special-page search-page">
-    <div className="page-title-row"><div><div className="eyebrow">Find</div><h1>Search photos</h1><p className="muted-copy">Describe a scene, or start from photos you pick. Reviewed photos are left out.</p></div><div className="button-row"><label className="scope-chip"><input type="checkbox" checked={allLibraries} onChange={(event) => setQuery('/search', 'scope', event.target.checked ? 'all' : null)}/> All libraries</label><label className="scope-chip"><input type="checkbox" checked={showReviewed} onChange={(event) => setQuery('/search', 'reviewed', event.target.checked ? '1' : null)}/> Include reviewed</label></div></div>
+    <div className="page-title-row"><div><div className="eyebrow">Find</div><h1>Search photos</h1><p className="muted-copy">Describe a scene, or start from photos you pick. Reviewed photos are left out.</p></div><div className="button-row"><label className="scope-chip"><input type="checkbox" checked={allLibraries} onChange={(event) => changeFilter('scope', event.target.checked ? 'all' : null)}/> All libraries</label><label className="scope-chip"><input type="checkbox" checked={showReviewed} onChange={(event) => changeFilter('reviewed', event.target.checked ? '1' : null)}/> Include reviewed</label></div></div>
     <form className="search-form" onSubmit={(event) => { event.preventDefault(); submit(input); }}><Search size={18}/><input aria-label="Search photos" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Try “people eating together” or “photographed paperwork”"/><button type="submit" className="primary-action">Search</button></form>
     {recent.length > 0 && <div className="recent-searches"><span>Saved searches</span>{recent.map((item) => <button type="button" key={item} className="ready-chip" onClick={() => go(`/search?q=${encodeURIComponent(item)}`)}>{item}</button>)}</div>}
     {Boolean(q) && request.data?.semanticAvailable === false && <div className="offline-banner"><Info size={15}/> Searching file names and folders for now. Describing a scene starts working once the embedding index is ready.</div>}
     {seedPhotos.length > 0 && <div className="similar-query">{seedPhotos.map((photo) => <img key={photo.contentId} src={mediaUrl(photo.thumbUrl, photo)} alt="" className={photo.sensitive === 'yes' ? 'sensitive-blur' : ''}/>)}<span>More like <strong>{seedPhotos[0]!.filename}</strong></span><button type="button" className="text-button" onClick={() => go('/search')}>Clear</button></div>}
-    <div className="search-results-heading"><strong>{formatCount(request.data && (q || similarMode) ? request.data.total : 0)} results</strong><span>{results.length ? (similarMode ? 'Ranked · closer first · click to select' : 'Click to select') : ''}</span>{selected.size > 0 && <button type="button" className="secondary-button" onClick={() => go(`/search?like=${selectedIds[0]}`)}>More like {selected.size === 1 ? 'this' : 'the first'}</button>}</div>
-    {results.length ? <div className="inventory-grid">{results.map((photo, index) => <div key={photo.contentId} className="search-result-tile"><PhotoTile photo={photo} gridMode selected={selected.has(photo.contentId)} onRange={() => setSelected((current) => { const next = new Set(current); if (next.has(photo.contentId)) next.delete(photo.contentId); else next.add(photo.contentId); return next; })} onOpen={() => openDetail(photo, results)}/>{similarMode && <span className="closer-label">{index < 12 ? 'Closer' : index < 48 ? 'Somewhat closer' : 'Further'}</span>}</div>)}</div>
+    <div className="search-results-heading"><strong>{formatCount(total)} results</strong><span>{results.length ? (similarMode ? 'Ranked · closer first · click to select' : 'Click to select') : ''}</span>{results.length > 0 && <button type="button" className="secondary-button" disabled={disabled} onClick={() => { void selectAll(); }}>{selectingAll ? 'Selecting…' : similarMode ? `Select all ${formatCount(total)} matches` : 'Select page'}</button>}{selected.size > 0 && <><span>{formatCount(selected.size)} selected</span><button type="button" className="text-button" disabled={busy || selectingAll} onClick={() => setSelected(new Map())}>Clear selection</button><button type="button" className="secondary-button" disabled={busy} onClick={() => go(`/search?like=${selectedIds[0]}${allLibraries ? '&scope=all' : ''}${showReviewed ? '&reviewed=1' : ''}`)}>More like {selected.size === 1 ? 'this' : 'the first'}</button></>}</div>
+    {selected.size > 0 && <div className="panel-card"><div className="panel-heading"><div><h2>Change category for {formatCount(selected.size)} photos</h2><p>{protectedCount ? `${formatCount(protectedCount)} protected photos selected. ` : ''}Review decisions and sensitivity checks stay unchanged.</p></div><div className="button-row"><label className="compact-select"><select aria-label="Category for selected photos" value={category} disabled={busy} onChange={(event) => setCategory(event.target.value as GroupId | '')}><option value="">Choose category…</option>{GROUPS.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><button type="button" className="primary-action" disabled={!category || busy || selectingAll} onClick={() => { void changeCategory(); }}>{busy ? 'Applying…' : 'Change category'}</button></div></div></div>}
+    {pagination}
+    {request.isLoading && Boolean(q || similarMode) ? <div className="empty-state"><LoaderCircle className="spin"/> Loading results…</div> : results.length ? <div className="inventory-grid">{results.map((photo, index) => <div key={photo.contentId} className="search-result-tile"><PhotoTile photo={photo} gridMode selected={selected.has(photo.contentId)} onRange={() => toggle(photo)} onOpen={() => openDetail(photo, results)}/>{similarMode && <span className="closer-label">{(page - 1) * pageSize + index < 12 ? 'Closer' : (page - 1) * pageSize + index < 48 ? 'Somewhat closer' : 'Further'}</span>}</div>)}</div>
       : <EmptyState title={unavailable ? 'Similar-photo search isn’t ready' : q || similarMode ? 'No matching photos' : 'Search your library'} body={unavailable ? 'It needs a promoted embedding index with vectors for this photo.' : q ? 'Try a different phrase, or search all libraries.' : 'Search by file or folder name, or open a photo and choose “More like this”.'}/>}
-    {selected.size > 0 && <><div className="mobile-bulk-hint">Use a larger screen for bulk actions.</div><ActionBar sentence="selected in these search results" eligibleCount={selected.size} protectedCount={0} excludedCount={0} includeProtected={false} onIncludeProtected={() => undefined} onAction={act}/></>}
+    {pagination}
+    {selected.size > 0 && <><div className="mobile-bulk-hint">Use a larger screen for bulk actions.</div><ActionBar sentence="selected in these search results" eligibleCount={eligiblePhotos.length} protectedCount={protectedCount} excludedCount={selected.size - eligiblePhotos.length} includeProtected={includeProtected} onIncludeProtected={() => setIncludeProtected(!includeProtected)} onAction={(decision) => { void act(decision); }} disabled={busy || selectingAll}/></>}
   </section>;
 }
 

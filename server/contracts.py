@@ -156,7 +156,30 @@ class SelectionInput(Contract):
 
 class BulkInput(Contract):
     selectionId: str
-    decision: Decision
+    decision: Decision | None = None
+    groupId: GroupId | None = None
+
+    @model_validator(mode="after")
+    def one_action(self):
+        if (self.decision is None) == (self.groupId is None):
+            raise ValueError("Specify a decision or a category")
+        return self
+
+
+class SelectedPhoto(Contract):
+    contentId: str
+    expectedVersion: int = Field(ge=0)
+
+
+class BulkGroupInput(Contract):
+    items: list[SelectedPhoto] = Field(min_length=1, max_length=500)
+    groupId: GroupId
+
+    @model_validator(mode="after")
+    def distinct_photos(self):
+        if len({item.contentId for item in self.items}) != len(self.items):
+            raise ValueError("Select each photo once")
+        return self
 
 
 class PhotoPatch(Contract):

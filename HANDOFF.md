@@ -379,3 +379,25 @@ visually verified to say **No failures**; laptop D3 assessment resumed after the
 No source files were changed and no database/history records were deleted. Future external
 source removals still need a successful Library **Scan now**; this does not add a file watcher.
 
+## 15. Similar-search paging and category changes (22 November 2026)
+
+The owner asked to select all More-like-this matches and change their category, then pointed
+out that the search reported 500 results while displaying only 120 with no page controls.
+Search now has Previous/Next controls above and below the grid, URL-backed pages, visible
+ranges and persistent selection across pages. The existing closest-500 similarity bound
+is explicit; Select all fetches that bounded ranked set, not the whole library. Membership
+resets on a changed seed/query/library/review filter; late select-all responses are discarded.
+
+A category picker applies the exact selected IDs and the review versions loaded at selection
+through a durable, batched Zima job. Additive migration `013` adds bulk-job `group_id`; no
+applied migration was edited. Manual category edits preserve decisions/sensitivity/importance,
+remove stale duplicate grouping when the effective category changes, and support one version-aware
+Undo. Concurrent edits produce conflicts. Search shows the number of protected selected photos;
+category correction does not set Keep/Later/Clutter, and decision actions exclude protected photos
+unless the owner opts in. No category change was tested on the owner's real photos.
+
+Local verification: 190 pytest passed, 1 skipped; 13 frontend tests passed; TypeScript and
+production build passed. New tests traverse all five result pages, edit a frozen 500-photo
+fixture, undo it, retain later edits, preserve source bytes/mtimes, and discard stale selections.
+Existing `styles.css` is unchanged. Deployment and live browser verification are recorded separately.
+

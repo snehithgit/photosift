@@ -28,6 +28,7 @@ from server import duplicates as duplicate_queries
 from server.contracts import (
     AppearanceSettings,
     ApprovalInput,
+    BulkGroupInput,
     BulkInput,
     ClaimInput,
     ClearInput,
@@ -468,6 +469,11 @@ def create_app(db_path=None, *, agent_token=None):
     def bulk(request: BulkInput):
         with db.write() as c:
             return review.enqueue_bulk(c, request)
+
+    @app.post("/api/bulk/groups", status_code=202)
+    def bulk_group(request: BulkGroupInput):
+        with db.write() as c:
+            return review.enqueue_groups(c, request)
 
     @app.get("/api/jobs/{identifier}")
     def job(identifier: str):

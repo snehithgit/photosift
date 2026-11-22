@@ -47,6 +47,7 @@ export function cleanQuery(query: PhotoQuery): PhotoQuery {
 export interface PhotoPage { items: Photo[]; total: number; protectedCount: number; page: number; limit: number; revision: number; queryFingerprint: string; groups: Array<{ key: string; count: number; pageOffset: number; contentIds: string[] }>; nextPage: number | null }
 export interface Review { sample: Photo[]; borderline: Photo[]; protected: Photo[]; total: number; protectedCount: number; borderlineCount: number; revision: number; queryFingerprint: string }
 export interface JobStatus { id: string; state: string; total: number; progress: number; applied: number; unchanged?: number; conflicts: number; conflictItems?: Array<{ contentId: string; reason: string }>; conflictIds?: string[]; actionId: string }
+export interface SearchPage { items: Photo[]; total: number; mode: string; semanticAvailable?: boolean; truncated?: boolean; indexId?: string }
 export interface DuplicateSet { id: string; kind: 'exact' | 'burst' | 'possible'; contentIds: string[]; photos: Photo[]; paths?: string[] }
 export interface Root { id: string; path: string; name: string; files: number; bytes: number; available?: boolean }
 export interface Stage { name: 'inventory' | 'prepare' | 'embed' | 'assess' | 'group'; done: number; total: number; ratePerMin: number | null; location: 'zima' | 'laptop'; state: string; counts: Record<string, number> }
@@ -89,6 +90,7 @@ export const api = {
   patchPhoto: (id: string, body: { expectedVersion: number; decision?: Decision; groupId?: GroupId; removeFromEvent?: boolean; overrideProtected?: boolean }) => request<{ photo: Photo; actionId: string }>(`/api/photos/${id}`, { method: 'PATCH', json: body }),
   freeze: (body: { query: PhotoQuery; queryRevision: number; queryFingerprint: string; exclusions: string[]; contentIds?: string[]; includeProtected: boolean }) => request<{ selectionId: string; count: number }>('/api/selections', { json: body }),
   bulk: (selectionId: string, decision: Decision) => request<JobStatus>('/api/bulk', { json: { selectionId, decision } }),
+  movePhotos: (photos: Photo[], groupId: GroupId) => request<JobStatus>('/api/bulk/groups', { json: { groupId, items: photos.map((photo) => ({ contentId: photo.contentId, expectedVersion: photo.reviewVersion })) } }),
   job: (id: string) => request<JobStatus>(`/api/jobs/${id}`),
   history: (limit = 100) => request<{ items: HistoryEntry[]; total: number }>(`/api/history?limit=${limit}`),
   undo: (actionId: string) => request<JobStatus>(`/api/history/${actionId}/undo`, { method: 'POST' }),
@@ -113,7 +115,7 @@ export const api = {
   promote: (indexId: string, evaluationId: string) => request<unknown>(`/api/indexes/${indexId}/promote`, { json: { evaluationId } }),
   score: (body: { query: PhotoQuery & Paging; indexId: string; promptVersion: string; evaluationId: string; highMargin: number; mediumMargin: number }) => request<ScoringPage>('/api/pipeline/score', { json: body }),
   analyze: (operation: 'pause' | 'resume' | 'cancel' | 'retry') => request<{ state: string }>(`/api/analyze/${operation}`, { method: 'POST' }),
-  search: (query: PhotoQuery & { like?: string }, paging: Paging = {}, signal?: AbortSignal) => request<PhotoPage & { mode: string; semanticAvailable?: boolean }>(`/api/search${queryString({ ...query, ...paging })}`, { signal }),
+  search: (query: PhotoQuery & { like?: string }, paging: Paging = {}, signal?: AbortSignal) => request<SearchPage>(`/api/search${queryString({ ...query, ...paging })}`, { signal }),
   setting: <T,>(section: string) => request<SettingValue<T>>(`/api/settings/${section}`),
   settings: () => request<Record<string, SettingValue<unknown>>>('/api/settings'),
   saveSetting: <T,>(section: string, expectedVersion: number, value: T) => request<SettingValue<T>>(`/api/settings/${section}`, { method: 'PATCH', json: { expectedVersion, value } }),

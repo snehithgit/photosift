@@ -15,7 +15,7 @@ interface PhotoSiftState {
   setIncludeProtected(value: boolean): void; notify(toast: ToastState | null): void;
   applyBulk(request: BulkRequest): Promise<void>; setDecision(photo: Photo, decision: Decision): Promise<boolean>;
   applyDecisions(items: Array<{ photo: Photo; decision: Decision }>, label: string): Promise<void>;
-  movePhoto(photo: Photo, groupId: GroupId): Promise<void>; removePhotoFromEvent(photo: Photo): Promise<void>; undo(actionId?: string): Promise<void>; clearToast(): void;
+  movePhoto(photo: Photo, groupId: GroupId): Promise<void>; movePhotos(photos: Photo[], groupId: GroupId): Promise<boolean>; removePhotoFromEvent(photo: Photo): Promise<void>; undo(actionId?: string): Promise<void>; clearToast(): void;
 }
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 const describe = (error: unknown) => (error instanceof ApiError ? error.message : 'Something went wrong. Try again.');
@@ -31,7 +31,7 @@ export const usePhotoSift = create<PhotoSiftState>((set, get) => {
       if (job.state === 'done') return job;
       const progress = job.total ? Math.round(job.progress / job.total * 100) : 0;
       const waiting = job.progress === 0 && Date.now() - started > 5000;
-      set({ job: { label, total, progress, phase: 'Applying decisions' }, toast: { message: label, detail: waiting ? WORKER_HINT : `${job.progress.toLocaleString()} of ${job.total.toLocaleString()}`, canUndo: false } });
+      set({ job: { label, total, progress, phase: 'Applying changes' }, toast: { message: label, detail: waiting ? WORKER_HINT : `${job.progress.toLocaleString()} of ${job.total.toLocaleString()}`, canUndo: false } });
       await sleep(400);
     }
   }
@@ -103,6 +103,22 @@ export const usePhotoSift = create<PhotoSiftState>((set, get) => {
       }
       set({ lastActions: actions, toast: actions.length || failed ? { message: `${label} · ${actions.length.toLocaleString()} ${actions.length === 1 ? 'photo' : 'photos'}`, detail: failed ? `${failed} changed elsewhere and were not overwritten.` : undefined, canUndo: actions.length > 0 } : { message: 'Nothing changed', detail: 'These photos already had those decisions.' } });
       await refreshAll();
+    },
+    movePhotos: async (photos, groupId) => {
+      if (!photos.length) return false;
+      const label = 'Changing category…';
+      set({ job: { label, total: photos.length, progress: 0, phase: 'Preparing changes' }, toast: { message: label, canUndo: false } });
+      try {
+        const started = await api.movePhotos(photos, groupId);
+        const job = await follow(started.id, label, photos.length);
+        set({ job: null, conflicts: job.conflictItems ?? [], lastActions: job.applied ? [job.actionId] : [], toast: { message: `Category changed · ${job.applied.toLocaleString()} photos`, detail: job.conflicts ? `${job.conflicts.toLocaleString()} changed elsewhere and were not overwritten.` : 'Review decisions stayed unchanged.', conflicts: job.conflicts, canUndo: job.applied > 0 } });
+        await refreshAll();
+        return true;
+      } catch (error) {
+        set({ job: null, toast: { message: 'Couldn’t change category', detail: describe(error) } });
+        await refreshAll();
+        return false;
+      }
     },
     movePhoto: async (photo, groupId) => {
       if (photo.groupId === groupId) return;

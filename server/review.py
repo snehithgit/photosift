@@ -2,6 +2,7 @@ import json
 
 from fastapi import HTTPException
 
+from server.contracts import BulkInput
 from server.db import action, audit, bump, fingerprint, now, packed, revision, uid
 from server.queries import detail, matched, query_fingerprint
 
@@ -82,7 +83,10 @@ def enqueue_bulk(c, request):
         "SELECT * FROM bulk_jobs WHERE selection_id=?", (request.selectionId,)
     ).fetchone()
     if existing:
-        if existing["decision"] != request.decision:
+        if (
+            existing["decision"] != (request.decision or "category")
+            or existing["group_id"] != request.groupId
+        ):
             raise HTTPException(409, "This frozen selection already has another action")
         return job(c, existing["id"])
     selection = c.execute(
@@ -91,16 +95,60 @@ def enqueue_bulk(c, request):
     if not selection:
         raise HTTPException(404, "Unknown frozen selection")
     identifier = uid()
-    action_id = action(c, f"Set decision: {request.decision}", selection["query"])
+    label = (
+        f"Change category: {request.groupId}"
+        if request.groupId
+        else f"Set decision: {request.decision}"
+    )
+    action_id = action(c, label, selection["query"])
     c.execute(
-        "INSERT INTO bulk_jobs(id,selection_id,decision,action_id,created_at) VALUES (?,?,?,?,?)",
-        (identifier, request.selectionId, request.decision, action_id, now()),
+        "INSERT INTO bulk_jobs(id,selection_id,decision,action_id,created_at,group_id) VALUES (?,?,?,?,?,?)",
+        (
+            identifier,
+            request.selectionId,
+            # An older worker must fail its decision CHECK rather than reset decisions
+            # if the API briefly upgrades before that worker during deployment.
+            request.decision or "category",
+            action_id,
+            now(),
+            request.groupId,
+        ),
     )
     c.execute(
         "INSERT INTO bulk_items(job_id,content_id,expected_version) SELECT ?,content_id,version FROM selection_items WHERE selection_id=?",
         (identifier, request.selectionId),
     )
     return job(c, identifier)
+
+
+def enqueue_groups(c, request):
+    # Explicit search membership is bounded to 500. Freeze the versions the user selected,
+    # not newer versions read while the background models keep working.
+    identifiers = [item.contentId for item in request.items]
+    placeholders = ",".join("?" for _ in identifiers)
+    found = c.execute(
+        f"SELECT content_id FROM photos WHERE content_id IN ({placeholders})",
+        identifiers,
+    ).fetchall()
+    if len(found) != len(identifiers):
+        raise HTTPException(
+            409, "One of the selected photos is no longer available; reload the results"
+        )
+    identifier = uid()
+    members = [(item.contentId, item.expectedVersion) for item in request.items]
+    scope = packed({"kind": "explicit-category", "contentIds": identifiers})
+    policy = c.execute("SELECT value FROM meta WHERE key='policyRevision'").fetchone()[
+        0
+    ]
+    c.execute(
+        "INSERT INTO selections VALUES (?,?,?,?,?,?,?,?,?)",
+        (identifier, scope, fingerprint(members), revision(c), policy, 1, 0, 0, now()),
+    )
+    c.executemany(
+        "INSERT INTO selection_items VALUES (?,?,?)",
+        [(identifier, content, version) for content, version in members],
+    )
+    return enqueue_bulk(c, BulkInput(selectionId=identifier, groupId=request.groupId))
 
 
 def job(c, identifier):
@@ -184,13 +232,14 @@ def process_bulk(db, batch_size=100):
             if reason:
                 state = "conflict"
             else:
-                state = (
-                    "applied"
-                    if set_decision(
+                changed = (
+                    set_group(c, item["content_id"], row["group_id"], row["action_id"])
+                    if row["group_id"] is not None
+                    else set_decision(
                         c, item["content_id"], row["decision"], row["action_id"]
                     )
-                    else "unchanged"
                 )
+                state = "applied" if changed else "unchanged"
             c.execute(
                 "UPDATE bulk_items SET state=?,reason=? WHERE job_id=? AND content_id=?",
                 (state, reason, row["id"], item["content_id"]),
@@ -200,6 +249,33 @@ def process_bulk(db, batch_size=100):
             (row["id"],),
         ).fetchone():
             c.execute("UPDATE bulk_jobs SET state='done' WHERE id=?", (row["id"],))
+    return True
+
+
+def set_group(c, content_id, group_id, action_id):
+    current = c.execute(
+        "SELECT ai_group,manual_group FROM group_assignments WHERE content_id=?",
+        (content_id,),
+    ).fetchone()
+    if current["manual_group"] == group_id:
+        return False
+    if group_id != (current["manual_group"] or current["ai_group"]):
+        c.execute(
+            "UPDATE photos SET duplicate_set=NULL WHERE content_id=?", (content_id,)
+        )
+    c.execute(
+        "UPDATE group_assignments SET manual_group=? WHERE content_id=?",
+        (group_id, content_id),
+    )
+    c.execute(
+        "UPDATE photos SET review_version=review_version+1 WHERE content_id=?",
+        (content_id,),
+    )
+    version = c.execute(
+        "SELECT review_version FROM photos WHERE content_id=?", (content_id,)
+    ).fetchone()[0]
+    audit(c, action_id, content_id, "group", current["manual_group"], group_id, version)
+    bump(c)
     return True
 
 
@@ -217,32 +293,7 @@ def patch_photo(c, content_id, request):
     if request.decision is not None:
         set_decision(c, content_id, request.decision, action_id)
     elif request.groupId is not None:
-        if request.groupId != p["groupId"]:
-            c.execute(
-                "UPDATE photos SET duplicate_set=NULL WHERE content_id=?", (content_id,)
-            )
-        before = c.execute(
-            "SELECT manual_group FROM group_assignments WHERE content_id=?",
-            (content_id,),
-        ).fetchone()[0]
-        c.execute(
-            "UPDATE group_assignments SET manual_group=? WHERE content_id=?",
-            (request.groupId, content_id),
-        )
-        c.execute(
-            "UPDATE photos SET review_version=review_version+1 WHERE content_id=?",
-            (content_id,),
-        )
-        audit(
-            c,
-            action_id,
-            content_id,
-            "group",
-            before,
-            request.groupId,
-            p["reviewVersion"] + 1,
-        )
-        bump(c)
+        set_group(c, content_id, request.groupId, action_id)
     elif request.removeFromEvent:
         before = p.get("eventId")
         c.execute("DELETE FROM event_members WHERE content_id=?", (content_id,))
