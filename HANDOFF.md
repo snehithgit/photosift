@@ -433,3 +433,17 @@ clicked there too: it now displays different photos on page 3 of 42, with `prote
 No review/category changes were made. Ignored `.data/verification/documents-pagination.jpg`
 contains the pagination bar only, without capturing document contents.
 
+## 17. Select only the current search page (22 November 2026)
+
+The owner superseded section 15's all-500 selection: they want to inspect and select only
+the photos on the current page. Search now says **Select all on this page (120)**, or (20)
+on the last page. It selects the loaded page synchronously and never fetches the hidden
+500-match set. Page/filter/seed/library changes clear the selection, category and protection
+override, so hidden photos from another page cannot remain armed for an action. Category
+jobs still freeze the exact selected versions, use Undo and preserve decisions/sensitivity.
+
+17 frontend tests, TypeScript and production build pass. The page-3 regression asserts that
+only results 241–360 are submitted and that no `limit=500` request occurs. Excluding a tile,
+page/filter clearing, all five pages and the last-page count of 20 are covered. No backend,
+schema or stylesheet changes. Live verification is recorded after deployment.
+

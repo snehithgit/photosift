@@ -36,7 +36,8 @@ describe('similar search selection and category changes', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/search?like=seed');
     usePhotoSift.setState({ job: null, toast: null, conflicts: [], lastActions: [] });
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    let categoryCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost');
       if (url.pathname === '/api/roots') return response([{ id: 'library', name: 'Library', path: '/library' }]);
       if (url.pathname === '/api/photos/seed') return response({ ...photos[0], contentId: 'seed', filename: 'seed.jpg' });
@@ -45,75 +46,75 @@ describe('similar search selection and category changes', () => {
         const limit = Number(url.searchParams.get('limit') ?? '120');
         return response({ items: photos.slice((page - 1) * limit, page * limit), total: 500, mode: 'same-index-image-similarity', truncated: true });
       }
-      if (url.pathname === '/api/bulk/groups') return response({ id: 'category-job', total: 499, progress: 0, state: 'queued', actionId: 'category-action', applied: 0, conflicts: 0 });
-      if (url.pathname === '/api/jobs/category-job') return response({ id: 'category-job', total: 499, progress: 499, state: 'done', actionId: 'category-action', applied: 499, conflicts: 0 });
+      if (url.pathname === '/api/bulk/groups') { categoryCount = (JSON.parse(init!.body as string) as { items: unknown[] }).items.length; return response({ id: 'category-job', total: categoryCount, progress: 0, state: 'queued', actionId: 'category-action', applied: 0, conflicts: 0 }); }
+      if (url.pathname === '/api/jobs/category-job') return response({ id: 'category-job', total: categoryCount, progress: categoryCount, state: 'done', actionId: 'category-action', applied: categoryCount, conflicts: 0 });
       throw new Error('Unexpected request: ' + url.pathname);
     }));
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-  it('pages through all 500 results, preserves selection, and sends the exact selected versions', async () => {
+  it('selects only the loaded page, respects exclusions, and clears selection before viewing another page', async () => {
     mount();
     await screen.findByText('photo-0.jpg');
     expect(screen.getAllByText(/Showing 1–120 of 500/)).toHaveLength(2);
     expect(screen.queryByText('photo-120.jpg')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Select all 500 matches' }));
-    await screen.findByText('500 selected', { exact: true });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]!);
-    await screen.findByText('photo-120.jpg');
-    expect(screen.getAllByText(/Showing 121–240 of 500.*500 selected across pages/)).toHaveLength(2);
-    const tile = screen.getByText('photo-120.jpg').closest('article')!;
+    fireEvent.click(screen.getByRole('button', { name: 'Select all on this page (120)' }));
+    await screen.findByText('120 selected', { exact: true });
+    const tile = screen.getByText('photo-1.jpg').closest('article')!;
     fireEvent.click(within(tile).getByRole('button', { pressed: true }));
-    await screen.findByText('499 selected', { exact: true });
-    // Browse every remaining page; the last twenty are reachable and still selected.
-    for (const first of ['photo-240.jpg', 'photo-360.jpg', 'photo-480.jpg']) {
-      fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]!);
-      await screen.findByText(first);
-    }
-    expect(screen.getAllByText(/Showing 481–500 of 500/)).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'Next' })[0]).toBeDisabled();
+    await screen.findByText('119 selected', { exact: true });
     fireEvent.change(screen.getByRole('combobox', { name: 'Category for selected photos' }), { target: { value: 'documents' } });
     fireEvent.click(screen.getByRole('button', { name: 'Change category' }));
     await waitFor(() => expect(usePhotoSift.getState().lastActions).toEqual(['category-action']));
     const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url) === '/api/bulk/groups');
     const body = JSON.parse(request![1]!.body as string) as { groupId: string; items: Array<{ contentId: string; expectedVersion: number }> };
     expect(body.groupId).toBe('documents');
-    expect(body.items).toHaveLength(499);
+    expect(body.items).toHaveLength(119);
     expect(body.items).toContainEqual({ contentId: 'photo-0', expectedVersion: 7 });
-    expect(body.items).toContainEqual({ contentId: 'photo-499', expectedVersion: 7 });
-    expect(body.items.some((item) => item.contentId === 'photo-120')).toBe(false);
+    expect(body.items).toContainEqual({ contentId: 'photo-119', expectedVersion: 7 });
+    expect(body.items.some((item) => item.contentId === 'photo-1' || Number(item.contentId.slice(6)) >= 120)).toBe(false);
     expect(usePhotoSift.getState().toast?.canUndo).toBe(true);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Select all on this page (120)' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Select all on this page (120)' }));
+    for (const first of ['photo-120.jpg', 'photo-240.jpg', 'photo-360.jpg', 'photo-480.jpg']) {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]!);
+      await screen.findByText(first);
+      expect(screen.queryByRole('button', { name: 'Change category' })).not.toBeInTheDocument();
+    }
+    expect(screen.getAllByText(/Showing 481–500 of 500/)).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Select all on this page (20)' }));
+    await screen.findByText('20 selected', { exact: true });
+    expect(screen.getAllByRole('button', { name: 'Next' })[0]).toBeDisabled();
   });
 
   it('clears selection and resets pagination when filters change', async () => {
     mount();
     await screen.findByText('photo-0.jpg');
-    fireEvent.click(screen.getByRole('button', { name: 'Select all 500 matches' }));
-    await screen.findByText('500 selected', { exact: true });
     fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]!);
     await screen.findByText('photo-120.jpg');
+    fireEvent.click(screen.getByRole('button', { name: 'Select all on this page (120)' }));
+    await screen.findByText('120 selected', { exact: true });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Include reviewed' }));
     await screen.findByText('photo-0.jpg');
     expect(window.location.search).not.toContain('page=');
     expect(screen.queryByRole('button', { name: 'Change category' })).not.toBeInTheDocument();
-    expect(screen.queryByText('500 selected', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('120 selected', { exact: true })).not.toBeInTheDocument();
   });
 
-  it('discards a late select-all response after the scope changes', async () => {
-    let release: ((value: Response) => void) | undefined;
-    const existing = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation((input, init) => {
-      if (String(input).includes('limit=500')) return new Promise<Response>((resolve) => { release = resolve; });
-      return existing(input, init);
-    });
+  it('selects and changes only page three without fetching unseen matches', async () => {
+    window.history.replaceState({}, '', '/search?like=seed&page=3');
     mount();
-    await screen.findByText('photo-0.jpg');
-    fireEvent.click(screen.getByRole('button', { name: 'Select all 500 matches' }));
-    await waitFor(() => expect(release).toBeDefined());
-    fireEvent.click(screen.getByRole('checkbox', { name: 'All libraries' }));
-    await waitFor(() => expect(window.location.search).toContain('scope=all'));
-    release!(response({ items: photos, total: 500, mode: 'same-index-image-similarity' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Select all 500 matches' })).toBeEnabled());
+    await screen.findByText('photo-240.jpg');
+    fireEvent.click(screen.getByRole('button', { name: 'Select all on this page (120)' }));
+    await screen.findByText('120 selected', { exact: true });
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('limit=500'))).toBe(false);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Category for selected photos' }), { target: { value: 'documents' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Change category' }));
+    await waitFor(() => expect(usePhotoSift.getState().lastActions).toEqual(['category-action']));
+    const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url) === '/api/bulk/groups');
+    const body = JSON.parse(request![1]!.body as string) as { items: Array<{ contentId: string }> };
+    expect(body.items).toHaveLength(120);
+    expect(body.items.map((item) => item.contentId)).toEqual(photos.slice(240,360).map((photo) => photo.contentId));
     expect(screen.queryByText('500 selected', { exact: true })).not.toBeInTheDocument();
   });
 });
