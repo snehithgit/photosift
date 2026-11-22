@@ -417,12 +417,19 @@ of the controls is in ignored `.data/verification/search-pagination.jpg`.
 ## 16. Initial quoted grid links (22 November 2026)
 
 The owner reported Documents-grid Next still showing the same photos from an older, repeatedly
-quoted `protectedOnly`/`page` URL. Section 15's router fix corrected generated links, but
-`useUrlSearch` still read `location.searchStr` directly on initial load. All screens now pass
-that shared reader through the same controlled numeric-flag normalization. Free-text search
-is preserved. A real RouterProvider/hook regression opens a repeatedly quoted page 2/protected
-link, verifies page 2 and protected=1, then Next=3 and Previous=2. No backend/schema/style changes.
-Live Documents-grid verification follows deployment; do not infer it from the earlier Search test.
+quoted `protectedOnly`/`page` URL. The existing Chrome SPA was still running the older frontend
+from before the router fix; a full navigation/reload was also necessary. `useUrlSearch` still
+read `location.searchStr` directly, so it now normalizes known numeric flags defensively rather
+than depending only on router canonicalization. Free-text search is preserved. A real
+RouterProvider/hook regression opens a repeatedly quoted page 2/protected link, verifies page 2
+and protected=1, then Next=3 and Previous=2. No backend/schema/style changes.
 Local verification: 17 frontend tests, TypeScript and production build pass; the stylesheet
 and backend are unchanged.
+GitHub checks and image smoke/publish passed; both Zima services were updated to
+`ghcr.io/snehithgit/photosift:sha-574ea1a`. A fresh browser with the exact legacy link verified
+page 2, Next to page 3 with a different API-matched first photo, and Previous back to page 2.
+The original Chrome tab was then fully navigated to the clean Documents link and Next was
+clicked there too: it now displays different photos on page 3 of 42, with `protectedOnly=1`.
+No review/category changes were made. Ignored `.data/verification/documents-pagination.jpg`
+contains the pagination bar only, without capturing document contents.
 
