@@ -15,4 +15,10 @@ describe('plain URL query values', () => {
     expect(parseSearch(stringifySearch(original))).toEqual(original);
     expect(parseSearch(stringifySearch({ q: '1234' })).q).toBe('1234');
   });
+  it('repairs numeric flags in older repeatedly quoted links while preserving quoted text', () => {
+    let quoted = '1';
+    for (let i = 0; i < 6; i += 1) quoted = JSON.stringify(quoted);
+    const params = new URLSearchParams({ protectedOnly: quoted, reviewed: '"1"', page: '"2"', q: '"family"' });
+    expect(parseSearch(params.toString())).toEqual({ protectedOnly: '1', reviewed: '1', page: '2', q: '"family"' });
+  });
 });

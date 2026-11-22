@@ -401,7 +401,9 @@ generated `page="2"`, which the screens read as invalid. Router search parsing/s
 now preserves plain URLSearchParams values (`page=2`, `reviewed=1`); real-router tests cover
 this and quoted/numeric text searches. Live preview verified page 2 with all 500 still selected.
 
-Local verification: 190 pytest passed, 1 skipped; 15 frontend tests passed; TypeScript and
+Older repeatedly quoted numeric flags are repaired during navigation without decoding free text.
+
+Local verification: 190 pytest passed, 1 skipped; 16 frontend tests passed; TypeScript and
 production build passed. New tests traverse all five result pages, edit a frozen 500-photo
 fixture, undo it, retain later edits, preserve source bytes/mtimes, and discard stale selections.
 Existing `styles.css` is unchanged. Deployment and live browser verification are recorded separately.

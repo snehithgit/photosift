@@ -13,7 +13,7 @@ import { LibraryScreen, AnalyzeScreen, DuplicatesScreen, EventsScreen, EventDeta
 export let router: ReturnType<typeof createRouter>;
 export function go(to: string) {
   const [path, queryString = ''] = to.split('?');
-  const search = Object.fromEntries(new URLSearchParams(queryString));
+  const search = parseSearch(queryString);
   void router.navigate({ to: (path || '/') as never, search: search as never } as never);
 }
 
